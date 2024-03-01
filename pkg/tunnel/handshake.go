@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/kungze/quic-tun/pkg/token"
-	"github.com/lucas-clemente/quic-go"
+	"github.com/quic-go/quic-go"
 )
 
 type handshakefunc func(context.Context, *quic.Stream, *HandshakeHelper) (bool, *net.Conn)

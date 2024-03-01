@@ -13,7 +13,7 @@ import (
 	"github.com/kungze/quic-tun/pkg/classifier"
 	"github.com/kungze/quic-tun/pkg/constants"
 	"github.com/kungze/quic-tun/pkg/log"
-	"github.com/lucas-clemente/quic-go"
+	"github.com/quic-go/quic-go"
 )
 
 type tunnel struct {

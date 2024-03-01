@@ -12,7 +12,7 @@ import (
 	"github.com/kungze/quic-tun/pkg/log"
 	"github.com/kungze/quic-tun/pkg/token"
 	"github.com/kungze/quic-tun/pkg/tunnel"
-	"github.com/lucas-clemente/quic-go"
+	"github.com/quic-go/quic-go"
 )
 
 type ClientEndpoint struct {
@@ -24,7 +24,7 @@ type ClientEndpoint struct {
 
 func (c *ClientEndpoint) Start() {
 	// Dial server endpoint
-	session, err := quic.DialAddr(c.ServerEndpointSocket, c.TlsConfig, &quic.Config{KeepAlive: true})
+	session, err := quic.DialAddr(context.TODO(), c.ServerEndpointSocket, c.TlsConfig, &quic.Config{KeepAlivePeriod: 300000})
 	if err != nil {
 		panic(err)
 	}
