@@ -7,12 +7,18 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/kungze/quic-tun/pkg/constants"
 	"github.com/kungze/quic-tun/pkg/log"
 	"github.com/kungze/quic-tun/pkg/token"
 	"github.com/kungze/quic-tun/pkg/tunnel"
-	"github.com/quic-go/quic-go"
+	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
+)
+
+var (
+	conns = make(map[string]*(tunnel.UDPConn)) // 声明并初始化conns映射
+	mu    = &sync.Mutex{}                      // 声明并初始化互斥锁
 )
 
 type ClientEndpoint struct {
@@ -24,60 +30,77 @@ type ClientEndpoint struct {
 
 func (c *ClientEndpoint) Start() {
 	// Dial server endpoint
-	session, err := quic.DialAddr(context.TODO(), c.ServerEndpointSocket, c.TlsConfig, &quic.Config{KeepAlivePeriod: 300000})
+	session, err := quic.DialAddr(c.ServerEndpointSocket, c.TlsConfig, &quic.Config{KeepAlive: true})
 	if err != nil {
 		panic(err)
 	}
 	parent_ctx := context.WithValue(context.TODO(), constants.CtxRemoteEndpointAddr, session.RemoteAddr().String())
-	// Listen on a TCP or UNIX socket, wait client application's connection request.
+	// Listen on a UDP socket, wait client application's connection request.
 	localSocket := strings.Split(c.LocalSocket, ":")
-	listener, err := net.Listen(strings.ToLower(localSocket[0]), strings.Join(localSocket[1:], ":"))
+	listener, err := net.ListenPacket(strings.ToLower(localSocket[0]), strings.Join(localSocket[1:], ":"))
 	if err != nil {
 		panic(err)
 	}
 	defer listener.Close()
-	log.Infow("Client endpoint start up successful", "listen address", listener.Addr())
+	if l, ok := listener.(net.Listener); ok {
+		log.Infow("Client endpoint start up successful", "listen address", l.Addr().String())
+	} else {
+		log.Error("Failed to get listener address")
+	}
+
+	buffer := make([]byte, 1024)
+
 	for {
 		// Accept client application connectin request
-		conn, err := listener.Accept()
+		n, addr, err := listener.ReadFrom(buffer)
 		if err != nil {
 			log.Errorw("Client app connect failed", "error", err.Error())
 		} else {
-			logger := log.WithValues(constants.ClientAppAddr, conn.RemoteAddr().String())
-			logger.Info("Client connection accepted, prepare to entablish tunnel with server endpint for this connection.")
-			go func() {
-				defer func() {
-					conn.Close()
-					logger.Info("Tunnel closed")
+			mu.Lock() // 在访问共享资源前锁定
+			conn, ok := conns[addr.String()]
+			if !ok {
+				conn = tunnel.NewUDPConn(listener, addr)
+				conns[addr.String()] = conn
+				conn.Queue <- buffer[:n]
+				logger := log.WithValues(constants.ClientAppAddr, addr.String())
+				logger.Info("Client connection accepted, prepare to entablish tunnel with server endpint for this connection.")
+				go func() {
+					defer func() {
+						conn.Close()
+						logger.Info("Tunnel closed")
+					}()
+					// Open a quic stream for each client application connection.
+					stream, err := session.OpenStreamSync()
+					if err != nil {
+						logger.Errorw("Failed to open stream to server endpoint.", "error", err.Error())
+						return
+					}
+					defer stream.Close()
+					logger = logger.WithValues(constants.StreamID, stream.StreamID())
+					// Create a context argument for each new tunnel
+					ctx := context.WithValue(
+						logger.WithContext(parent_ctx),
+						constants.CtxClientAppAddr, addr.String())
+					hsh := tunnel.NewHandshakeHelper(constants.TokenLength, handshake)
+					hsh.TokenSource = &c.TokenSource
+					// Create a new tunnel for the new client application connection.
+					tun := tunnel.NewTunnel(&stream, constants.ClientEndpoint)
+					tun.Conn = conn
+					tun.Hsh = &hsh
+					if !tun.HandShake(ctx) {
+						return
+					}
+					tun.Establish(ctx)
 				}()
-				// Open a quic stream for each client application connection.
-				stream, err := session.OpenStreamSync(context.Background())
-				if err != nil {
-					logger.Errorw("Failed to open stream to server endpoint.", "error", err.Error())
-					return
-				}
-				defer stream.Close()
-				logger = logger.WithValues(constants.StreamID, stream.StreamID())
-				// Create a context argument for each new tunnel
-				ctx := context.WithValue(
-					logger.WithContext(parent_ctx),
-					constants.CtxClientAppAddr, conn.RemoteAddr().String())
-				hsh := tunnel.NewHandshakeHelper(constants.TokenLength, handshake)
-				hsh.TokenSource = &c.TokenSource
-				// Create a new tunnel for the new client application connection.
-				tun := tunnel.NewTunnel(&stream, constants.ClientEndpoint)
-				tun.Conn = &conn
-				tun.Hsh = &hsh
-				if !tun.HandShake(ctx) {
-					return
-				}
-				tun.Establish(ctx)
-			}()
+			} else {
+				conn.Queue <- buffer[:n]
+			}
+			mu.Unlock() // 在访问共享资源后解锁
 		}
 	}
 }
 
-func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHelper) (bool, *net.Conn) {
+func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHelper) (bool, *tunnel.UDPConn) {
 	logger := log.FromContext(ctx)
 	logger.Info("Starting handshake with server endpoint")
 	token, err := (*hsh.TokenSource).GetToken(fmt.Sprint(ctx.Value(constants.CtxClientAppAddr)))

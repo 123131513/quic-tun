@@ -13,12 +13,81 @@ import (
 	"github.com/kungze/quic-tun/pkg/classifier"
 	"github.com/kungze/quic-tun/pkg/constants"
 	"github.com/kungze/quic-tun/pkg/log"
-	"github.com/quic-go/quic-go"
+	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
 )
+
+type UDPConn struct {
+	pc      net.PacketConn
+	remote  net.Addr
+	Queue   chan []byte
+	closed  bool
+	mu      sync.Mutex
+	writeMu sync.Mutex // 新增一个互斥锁用于写入操作
+}
+
+func NewUDPConn(pc net.PacketConn, remote net.Addr) *UDPConn {
+	return &UDPConn{
+		pc:      pc,
+		remote:  remote,
+		Queue:   make(chan []byte, 1024),
+		closed:  false,
+		mu:      sync.Mutex{},
+		writeMu: sync.Mutex{},
+	}
+}
+
+func (c *UDPConn) Read(b []byte) (n int, err error) {
+	data, ok := <-c.Queue // 从队列中读取数据
+	if !ok {
+		return 0, io.EOF // 如果队列已经关闭，返回EOF错误
+	}
+	n = copy(b, data) // 将数据复制到b
+	return n, nil
+}
+
+func (c *UDPConn) Write(b []byte) (n int, err error) {
+	c.writeMu.Lock()         // 在写入操作前锁定
+	defer c.writeMu.Unlock() // 在写入操作后解锁
+	return c.pc.WriteTo(b, c.remote)
+}
+
+func (c *UDPConn) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		return nil
+	}
+
+	c.closed = true
+	close(c.Queue)
+
+	return nil
+}
+
+func (c *UDPConn) LocalAddr() net.Addr {
+	return c.pc.LocalAddr()
+}
+
+func (c *UDPConn) RemoteAddr() net.Addr {
+	return c.remote
+}
+
+func (c *UDPConn) SetDeadline(t time.Time) error {
+	return c.pc.SetDeadline(t)
+}
+
+func (c *UDPConn) SetReadDeadline(t time.Time) error {
+	return c.pc.SetReadDeadline(t)
+}
+
+func (c *UDPConn) SetWriteDeadline(t time.Time) error {
+	return c.pc.SetWriteDeadline(t)
+}
 
 type tunnel struct {
 	Stream             *quic.Stream     `json:"-"`
-	Conn               *net.Conn        `json:"-"`
+	Conn               *UDPConn         `json:"-"`
 	Hsh                *HandshakeHelper `json:"-"`
 	Uuid               uuid.UUID        `json:"uuid"`
 	StreamID           quic.StreamID    `json:"streamId"`
@@ -35,7 +104,7 @@ type tunnel struct {
 	ProtocolProperties any              `json:"protocolProperties"`
 	// Used to cache the header data from QUIC stream
 	streamCache *classifier.HeaderCache
-	// Used to cache the header data from TCP/UNIX socket connection
+	// Used to cache the header data from udp socket connection
 	connCache *classifier.HeaderCache
 }
 
@@ -170,9 +239,9 @@ func (t *tunnel) stream2Conn(logger log.Logger, wg *sync.WaitGroup, forwardNumCh
 		wg.Done()
 	}()
 	// Cache the first 1024 byte datas, quic-tun will use them to analy the traffic's protocol
-	err := t.copyN(io.MultiWriter(*t.Conn, t.streamCache), *t.Stream, classifier.HeaderLength, forwardNumChan)
+	err := t.copyN(io.MultiWriter(t.Conn, t.streamCache), *t.Stream, classifier.HeaderLength, forwardNumChan)
 	if err == nil {
-		err = t.copy(*t.Conn, *t.Stream, forwardNumChan)
+		err = t.copy(t.Conn, *t.Stream, forwardNumChan)
 	}
 	if err != nil {
 		logger.Errorw("Can not forward packet from QUIC stream to TCP/UNIX socket", "error", err.Error())
@@ -186,9 +255,9 @@ func (t *tunnel) conn2Stream(logger log.Logger, wg *sync.WaitGroup, forwardNumCh
 		wg.Done()
 	}()
 	// Cache the first 1024 byte datas, quic-tun will use them to analy the traffic's protocol
-	err := t.copyN(io.MultiWriter(*t.Stream, t.connCache), *t.Conn, classifier.HeaderLength, forwardNumChan)
+	err := t.copyN(io.MultiWriter(*t.Stream, t.connCache), t.Conn, classifier.HeaderLength, forwardNumChan)
 	if err == nil {
-		err = t.copy(*t.Stream, *t.Conn, forwardNumChan)
+		err = t.copy(*t.Stream, t.Conn, forwardNumChan)
 	}
 	if err != nil {
 		logger.Errorw("Can not forward packet from TCP/UNIX socket to QUIC stream", "error", err.Error())

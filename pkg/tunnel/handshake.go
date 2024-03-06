@@ -2,14 +2,13 @@ package tunnel
 
 import (
 	"context"
-	"net"
 	"strings"
 
 	"github.com/kungze/quic-tun/pkg/token"
-	"github.com/quic-go/quic-go"
+	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
 )
 
-type handshakefunc func(context.Context, *quic.Stream, *HandshakeHelper) (bool, *net.Conn)
+type handshakefunc func(context.Context, *quic.Stream, *HandshakeHelper) (bool, *UDPConn)
 
 type HandshakeHelper struct {
 	// The function used to process handshake, the handshake processes
