@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 
@@ -29,8 +30,20 @@ type ClientEndpoint struct {
 }
 
 func (c *ClientEndpoint) Start() {
+	dir, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("PROJECT_HOME_DIR", dir)
 	// Dial server endpoint
-	session, err := quic.DialAddr(c.ServerEndpointSocket, c.TlsConfig, &quic.Config{KeepAlive: true})
+	cfgServer := &quic.Config{
+		KeepAlive:   true,
+		CreatePaths: true,
+		Scheduler:   "round_robin", // Or any of the above mentioned scheduler
+		WeightsFile: dir,
+		Training:    false,
+	}
+	session, err := quic.DialAddr(c.ServerEndpointSocket, c.TlsConfig, cfgServer) //&quic.Config{KeepAlive: true})
 	if err != nil {
 		panic(err)
 	}
