@@ -55,13 +55,9 @@ func (c *ClientEndpoint) Start() {
 		panic(err)
 	}
 	defer listener.Close()
-	if l, ok := listener.(net.Listener); ok {
-		log.Infow("Client endpoint start up successful", "listen address", l.Addr().String())
-	} else {
-		log.Error("Failed to get listener address")
-	}
+	log.Infow("Client endpoint start up successful", "listen address", listener.LocalAddr().String())
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, 65536)
 
 	for {
 		// Accept client application connectin request

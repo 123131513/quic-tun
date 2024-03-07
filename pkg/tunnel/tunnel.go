@@ -42,6 +42,12 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 		return 0, io.EOF // 如果队列已经关闭，返回EOF错误
 	}
 	n = copy(b, data) // 将数据复制到b
+	if n == 0 {
+		n, _, err := c.pc.ReadFrom(b)
+		if err != nil {
+			return n, err
+		}
+	}
 	return n, nil
 }
 
