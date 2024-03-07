@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net"
+	"os"
 	"strings"
 
 	"github.com/kungze/quic-tun/pkg/constants"
@@ -21,6 +22,11 @@ type ServerEndpoint struct {
 }
 
 func (s *ServerEndpoint) Start() {
+	dir, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("PROJECT_HOME_DIR", dir)
 	// Listen a quic(UDP) socket.
 	listener, err := quic.ListenAddr(s.Address, s.TlsConfig, nil)
 	if err != nil {
