@@ -62,6 +62,9 @@ func (c *ClientEndpoint) Start() {
 	for {
 		// Accept client application connectin request
 		n, addr, err := listener.ReadFrom(buffer)
+		fmt.Println(addr.String())
+		fmt.Println("Hello, World!")
+		fmt.Println(listener.LocalAddr().String())
 		if err != nil {
 			log.Errorw("Client app connect failed", "error", err.Error())
 		} else {
