@@ -71,7 +71,7 @@ func (c *ClientEndpoint) Start() {
 			mu.Lock() // 在访问共享资源前锁定
 			conn, ok := conns[addr.String()]
 			if !ok {
-				conn = tunnel.NewUDPConn(listener, addr)
+				conn = tunnel.NewUDPConn(listener, addr, false, conns)
 				conns[addr.String()] = conn
 				conn.Queue <- buffer[:n]
 				logger := log.WithValues(constants.ClientAppAddr, addr.String())

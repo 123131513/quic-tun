@@ -17,36 +17,43 @@ import (
 )
 
 type UDPConn struct {
-	pc      net.PacketConn
-	remote  net.Addr
-	Queue   chan []byte
-	closed  bool
-	mu      sync.Mutex
-	writeMu sync.Mutex // 新增一个互斥锁用于写入操作
+	pc       net.PacketConn
+	remote   net.Addr
+	Queue    chan []byte
+	closed   bool
+	mu       sync.Mutex
+	writeMu  sync.Mutex // 新增一个互斥锁用于写入操作
+	isServer bool
+	conns    map[string]*UDPConn
+	connsMu  sync.Mutex // 新增字段
 }
 
-func NewUDPConn(pc net.PacketConn, remote net.Addr) *UDPConn {
+func NewUDPConn(pc net.PacketConn, remote net.Addr, isServer bool, conns map[string]*UDPConn) *UDPConn {
 	return &UDPConn{
-		pc:      pc,
-		remote:  remote,
-		Queue:   make(chan []byte, 1024),
-		closed:  false,
-		mu:      sync.Mutex{},
-		writeMu: sync.Mutex{},
+		pc:       pc,
+		remote:   remote,
+		Queue:    make(chan []byte, 1024),
+		closed:   false,
+		mu:       sync.Mutex{},
+		writeMu:  sync.Mutex{},
+		isServer: isServer,
+		conns:    conns,
 	}
 }
 
 func (c *UDPConn) Read(b []byte) (n int, err error) {
-	data, ok := <-c.Queue // 从队列中读取数据
-	if !ok {
-		return 0, io.EOF // 如果队列已经关闭，返回EOF错误
-	}
-	n = copy(b, data) // 将数据复制到b
-	if n == 0 {
+	if !c.isServer {
+		data, ok := <-c.Queue // 从队列中读取数据
+		if !ok {
+			return 0, io.EOF // 如果队列已经关闭，返回EOF错误
+		}
+		n = copy(b, data) // 将数据复制到b
+	} else {
 		n, _, err := c.pc.ReadFrom(b)
 		if err != nil {
-			return n, err
+			return 0, err
 		}
+		return n, nil
 	}
 	return n, nil
 }
@@ -54,7 +61,15 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 func (c *UDPConn) Write(b []byte) (n int, err error) {
 	c.writeMu.Lock()         // 在写入操作前锁定
 	defer c.writeMu.Unlock() // 在写入操作后解锁
-	return c.pc.WriteTo(b, c.remote)
+	udpConn, ok := c.pc.(*net.UDPConn)
+	if !ok {
+		return 0, fmt.Errorf("not a UDP connection")
+	}
+	if c.isServer {
+		return udpConn.Write(b)
+	} else {
+		return c.pc.WriteTo(b, c.remote)
+	}
 }
 
 func (c *UDPConn) Close() error {
@@ -67,6 +82,11 @@ func (c *UDPConn) Close() error {
 
 	c.closed = true
 	close(c.Queue)
+
+	// 删除映射中的 UDPConn
+	c.connsMu.Lock() // 在操作映射前锁定
+	delete(c.conns, c.remote.String())
+	c.connsMu.Unlock() // 在操作映射后解锁
 
 	return nil
 }

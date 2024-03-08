@@ -7,12 +7,18 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/kungze/quic-tun/pkg/constants"
 	"github.com/kungze/quic-tun/pkg/log"
 	"github.com/kungze/quic-tun/pkg/token"
 	"github.com/kungze/quic-tun/pkg/tunnel"
 	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
+)
+
+var (
+	conns = make(map[string]*(tunnel.UDPConn)) // 声明并初始化conns映射
+	mu    = &sync.Mutex{}                      // 声明并初始化互斥锁
 )
 
 type ServerEndpoint struct {
@@ -102,6 +108,6 @@ func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHe
 		return false, nil
 	}
 	logger.Info("Handshake successful")
-	udpConn := tunnel.NewUDPConn(conn, conn.RemoteAddr())
+	udpConn := tunnel.NewUDPConn(conn, conn.RemoteAddr(), true, conns)
 	return true, udpConn
 }
