@@ -81,28 +81,32 @@ func (c *ClientEndpoint) Start() {
 						conn.Close()
 						logger.Info("Tunnel closed")
 					}()
-					// Open a quic stream for each client application connection.
-					stream, err := session.OpenStreamSync()
-					if err != nil {
-						logger.Errorw("Failed to open stream to server endpoint.", "error", err.Error())
-						return
+					// Define the number of streams you want to open
+					numStreams := 3
+					for i := 0; i < numStreams; i++ {
+						// Open a quic stream for each client application connection.
+						stream, err := session.OpenStreamSync()
+						if err != nil {
+							logger.Errorw("Failed to open stream to server endpoint.", "error", err.Error())
+							return
+						}
+						defer stream.Close()
+						logger = logger.WithValues(constants.StreamID, stream.StreamID())
+						// Create a context argument for each new tunnel
+						ctx := context.WithValue(
+							logger.WithContext(parent_ctx),
+							constants.CtxClientAppAddr, addr.String())
+						hsh := tunnel.NewHandshakeHelper(constants.TokenLength, handshake)
+						hsh.TokenSource = &c.TokenSource
+						// Create a new tunnel for the new client application connection.
+						tun := tunnel.NewTunnel(&stream, constants.ClientEndpoint)
+						tun.Conn = conn
+						tun.Hsh = &hsh
+						if !tun.HandShake(ctx) {
+							return
+						}
+						tun.Establish(ctx)
 					}
-					defer stream.Close()
-					logger = logger.WithValues(constants.StreamID, stream.StreamID())
-					// Create a context argument for each new tunnel
-					ctx := context.WithValue(
-						logger.WithContext(parent_ctx),
-						constants.CtxClientAppAddr, addr.String())
-					hsh := tunnel.NewHandshakeHelper(constants.TokenLength, handshake)
-					hsh.TokenSource = &c.TokenSource
-					// Create a new tunnel for the new client application connection.
-					tun := tunnel.NewTunnel(&stream, constants.ClientEndpoint)
-					tun.Conn = conn
-					tun.Hsh = &hsh
-					if !tun.HandShake(ctx) {
-						return
-					}
-					tun.Establish(ctx)
 				}()
 			} else {
 				conn.Queue <- buffer[:n]
