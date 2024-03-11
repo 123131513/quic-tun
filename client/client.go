@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/kungze/quic-tun/pkg/constants"
 	"github.com/kungze/quic-tun/pkg/log"
 	"github.com/kungze/quic-tun/pkg/token"
@@ -55,6 +57,24 @@ func (c *ClientEndpoint) Start() {
 		panic(err)
 	}
 	defer listener.Close()
+
+	// Type assert to *net.UDPConn
+	udpConn := listener.(*net.UDPConn)
+
+	// Get the syscall.RawConn from the *net.UDPConn
+	rawConn, err := udpConn.SyscallConn()
+	if err != nil {
+		panic(err)
+	}
+
+	// Set the socket option
+	err = rawConn.Control(func(fd uintptr) {
+		err = unix.SetsockoptInt(int(fd), unix.SOL_IP, unix.IP_TRANSPARENT, 1)
+	})
+	if err != nil {
+		panic(err)
+	}
+
 	log.Infow("Client endpoint start up successful", "listen address", listener.LocalAddr().String())
 
 	buffer := make([]byte, 65536)
