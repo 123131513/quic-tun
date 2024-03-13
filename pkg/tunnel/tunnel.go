@@ -19,6 +19,7 @@ import (
 type UDPConn struct {
 	pc       net.PacketConn
 	remote   net.Addr
+	udpconn  *net.UDPConn
 	Queue    chan []byte
 	closed   bool
 	mu       sync.Mutex
@@ -28,10 +29,11 @@ type UDPConn struct {
 	connsMu  sync.Mutex // 新增字段
 }
 
-func NewUDPConn(pc net.PacketConn, remote net.Addr, isServer bool, conns map[string]*UDPConn) *UDPConn {
+func NewUDPConn(pc net.PacketConn, remote net.Addr, isServer bool, conns map[string]*UDPConn, udpconn *net.UDPConn) *UDPConn {
 	return &UDPConn{
 		pc:       pc,
 		remote:   remote,
+		udpconn:  udpconn,
 		Queue:    make(chan []byte, 1024),
 		closed:   false,
 		mu:       sync.Mutex{},
@@ -68,7 +70,102 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 	if c.isServer {
 		return udpConn.Write(b)
 	} else {
-		return c.pc.WriteTo(b, c.remote)
+		// // 创建一个 socket
+
+		// conn, err := net.Dial("udp", c.remote.String())
+		// if err != nil {
+		// 	return 0, err
+		// }
+
+		// // 获取到底层的 syscall.RawConn
+		// rawConn, err := conn.(*net.UDPConn).SyscallConn()
+		// if err != nil {
+		// 	return 0, err
+		// }
+
+		// // 获取文件描述符
+		// var fdc int
+		// err = rawConn.Control(func(descriptor uintptr) {
+		// 	fdc = int(descriptor)
+		// })
+		// if err != nil {
+		// 	log.Fatalf("Failed to retrieve file descriptor: %v", err)
+		// }
+
+		// // 设置 IP_TRANSPARENT 选项
+		// var sockfd uintptr
+		// err = rawConn.Control(func(fd uintptr) {
+		// 	sockfd = uintptr(fd)
+		// 	err = unix.SetsockoptInt(int(sockfd), unix.SOL_IP, unix.IP_TRANSPARENT, 1)
+		// })
+		// if err != nil {
+		// 	return 0, err
+		// }
+
+		// // 获取 IP 地址和端口号
+		// ip := c.remote.(*net.UDPAddr).IP
+		// port := c.remote.(*net.UDPAddr).Port
+
+		// src := &net.UDPAddr{
+		// 	IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
+		// 	Port: 6666,                    // Replace with your source port
+		// }
+		// srcip := src.IP
+		// srcport := src.Port
+
+		// // 创建一个 syscall.SockaddrInet4
+		// sockaddr := &unix.SockaddrInet4{Port: port}
+		// copy(sockaddr.Addr[:], ip.To4())
+
+		// srcsockaddr := &unix.SockaddrInet4{Port: srcport}
+		// copy(sockaddr.Addr[:], srcip.To4())
+
+		// // 将 sockaddr 转换为字节切片
+		// sockaddrBytes := (*[unsafe.Sizeof(*sockaddr)]byte)(unsafe.Pointer(sockaddr))[:unsafe.Sizeof(*sockaddr)]
+		// srcsockaddrBytes := (*[unsafe.Sizeof(*srcsockaddr)]byte)(unsafe.Pointer(srcsockaddr))[:unsafe.Sizeof(*srcsockaddr)]
+
+		// srcsockaddrBytes = srcsockaddrBytes
+		// // 创建一个足够大的切片来存储 cmsghdr 结构和源地址
+		// control := make([]byte, unix.CmsgSpace(net.IPv4len))
+
+		// // 创建一个 cmsghdr 结构
+		// cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&control[0]))
+		// cmsg.Level = unix.IPPROTO_IP
+		// cmsg.Type = unix.IP_PKTINFO
+		// cmsg.SetLen(unix.CmsgLen(net.IPv4len))
+
+		// // 将源地址复制到 cmsghdr 结构后面
+		// copy(control[unix.CmsgLen(0):], srcip.To4())
+
+		// // 创建一个带有源地址和目标地址的 msghdr
+		// msg := &unix.Msghdr{
+		// 	Name:       &sockaddrBytes[0],
+		// 	Namelen:    uint32(len(sockaddrBytes)),
+		// 	Iov:        &[]unix.Iovec{{Base: &b[0], Len: uint64(len(b))}}[0],
+		// 	Iovlen:     uint64(len(b)),
+		// 	Control:    &control[0],
+		// 	Controllen: uint64(len(control)),
+		// }
+
+		// // 发送数据包
+		// // 获取 unix.SO_SNDBUF 套接字选项
+		// sndbuf, err := unix.GetsockoptInt(fdc, unix.SOL_SOCKET, unix.SO_SNDBUF)
+		// if err != nil {
+		// 	log.Fatalf("Failed to get socket option: %v", err)
+		// }
+
+		// fmt.Printf("The maximum allowed packet size is: %d bytes\n", sndbuf)
+		// fmt.Println("Hello, World!")
+		// fmt.Println(len(sockaddrBytes))
+		// fmt.Println(len(b))
+		// fmt.Println(len(control))
+		// _, _, err = unix.Syscall(unix.SYS_SENDMSG, sockfd, uintptr(unsafe.Pointer(msg)), 0)
+		// if err != nil {
+		// 	return 0, err
+		// }
+
+		// return len(b), nil
+		return c.udpconn.Write(b) //, c.remote.(*net.UDPAddr))
 	}
 }
 

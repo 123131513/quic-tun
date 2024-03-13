@@ -34,7 +34,10 @@ func (s *ServerEndpoint) Start() {
 	}
 	os.Setenv("PROJECT_HOME_DIR", dir)
 	// Listen a quic(UDP) socket.
-	listener, err := quic.ListenAddr(s.Address, s.TlsConfig, nil)
+	cfgServer := &quic.Config{
+		CreatePaths: true,
+	}
+	listener, err := quic.ListenAddr(s.Address, s.TlsConfig, cfgServer)
 	if err != nil {
 		panic(err)
 	}
@@ -108,6 +111,6 @@ func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHe
 		return false, nil
 	}
 	logger.Info("Handshake successful")
-	udpConn := tunnel.NewUDPConn(conn, conn.RemoteAddr(), true, conns)
+	udpConn := tunnel.NewUDPConn(conn, conn.RemoteAddr(), true, conns, nil)
 	return true, udpConn
 }
