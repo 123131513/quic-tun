@@ -2,7 +2,7 @@ package classifier
 
 const (
 	// The max lenght of the traffic header data which the quic-tun will cache them and use them to classify traffic
-	HeaderLength = 1024
+	HeaderLength = 32768
 )
 
 type HeaderCache struct {

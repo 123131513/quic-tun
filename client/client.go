@@ -97,9 +97,6 @@ func (c *ClientEndpoint) Start() {
 		fmt.Println(listener.LocalAddr().String())
 		// Accept client application connectin request
 		n, addr, err := listener.ReadFrom(buffer)
-		fmt.Println(addr.String())
-		fmt.Println("Hello, World!")
-		fmt.Println(listener.LocalAddr().String())
 		if err != nil {
 			log.Errorw("Client app connect failed", "error", err.Error())
 		} else {
@@ -116,8 +113,8 @@ func (c *ClientEndpoint) Start() {
 				}
 				//defer udpconn.Close()
 
-				fmt.Println(udpconn.LocalAddr().String())
-				fmt.Println(udpconn.RemoteAddr().String())
+				// fmt.Println(udpconn.LocalAddr().String())
+				// fmt.Println(udpconn.RemoteAddr().String())
 
 				udpconn.Close()
 				conn = tunnel.NewUDPConn(listener, addr, false, conns, udpConn)

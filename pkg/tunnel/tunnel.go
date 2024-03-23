@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -37,7 +38,7 @@ func NewUDPConn(pc net.PacketConn, remote net.Addr, isServer bool, conns map[str
 		pc:       pc,
 		remote:   remote,
 		udpconn:  udpconn,
-		Queue:    make(chan []byte, 1024),
+		Queue:    make(chan []byte, 32768),
 		closed:   false,
 		mu:       sync.Mutex{},
 		writeMu:  sync.Mutex{},
@@ -53,14 +54,22 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 			return 0, io.EOF // 如果队列已经关闭，返回EOF错误
 		}
 		n = copy(b, data) // 将数据复制到b
+		fmt.Println("client read")
+		fmt.Println(n)
 	} else {
 		n, _, err := c.pc.ReadFrom(b)
 		if err != nil {
 			return 0, err
 		}
+		fmt.Println("server read")
+		fmt.Println(n)
 		return n, nil
 	}
 	return n, nil
+}
+
+func (c *UDPConn) ReadFull(b []byte) (n int, err error) {
+	return c.Read(b)
 }
 
 func (c *UDPConn) Write(b []byte) (n int, err error) {
@@ -277,9 +286,9 @@ func (t *tunnel) countTraffic(ctx context.Context, stream2conn, conn2stream <-ch
 		case tmp = <-conn2stream:
 			c2sTotal += int64(tmp)
 		case <-timeTick.C:
-			s2cRate = float64((s2cTotal - s2cPreTotal)) / 1024.0
+			s2cRate = float64((s2cTotal - s2cPreTotal)) / 32768.0
 			s2cPreTotal = s2cTotal
-			c2sRate = float64((c2sTotal - c2sPreTotal)) / 1024.0
+			c2sRate = float64((c2sTotal - c2sPreTotal)) / 32768.0
 			c2sPreTotal = c2sTotal
 		}
 		if t.Endpoint == constants.ClientEndpoint {
@@ -303,8 +312,8 @@ func (t *tunnel) Establish(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	var (
-		steam2conn  = make(chan int, 1024)
-		conn2stream = make(chan int, 1024)
+		steam2conn  = make(chan int, 32768)
+		conn2stream = make(chan int, 32768)
 	)
 	t.fillProperties(ctx)
 	DataStore.Store(t.Uuid, *t)
@@ -383,10 +392,11 @@ func (t *tunnel) stream2Conn(logger log.Logger, wg *sync.WaitGroup, forwardNumCh
 		(*t.Conn).Close()
 		wg.Done()
 	}()
-	// Cache the first 1024 byte datas, quic-tun will use them to analy the traffic's protocol
-	err := t.copyN(io.MultiWriter(t.Conn, t.streamCache), *t.Stream, classifier.HeaderLength, forwardNumChan)
+	isc2s := false
+	// Cache the first 32768 byte datas, quic-tun will use them to analy the traffic's protocol
+	err := t.copyN(io.MultiWriter(t.Conn, t.streamCache), *t.Stream, classifier.HeaderLength, forwardNumChan, isc2s)
 	if err == nil {
-		err = t.copy(t.Conn, *t.Stream, forwardNumChan)
+		err = t.copy(t.Conn, *t.Stream, forwardNumChan, isc2s)
 	}
 	if err != nil {
 		logger.Errorw("Can not forward packet from QUIC stream to TCP/UNIX socket", "error", err.Error())
@@ -399,10 +409,11 @@ func (t *tunnel) conn2Stream(logger log.Logger, wg *sync.WaitGroup, forwardNumCh
 		(*t.Conn).Close()
 		wg.Done()
 	}()
-	// Cache the first 1024 byte datas, quic-tun will use them to analy the traffic's protocol
-	err := t.copyN(io.MultiWriter(*t.Stream, t.connCache), t.Conn, classifier.HeaderLength, forwardNumChan)
+	isc2s := true
+	// Cache the first 32768 byte datas, quic-tun will use them to analy the traffic's protocol
+	err := t.copyN(io.MultiWriter(*t.Stream, t.connCache), t.Conn, classifier.HeaderLength, forwardNumChan, isc2s)
 	if err == nil {
-		err = t.copy(*t.Stream, t.Conn, forwardNumChan)
+		err = t.copy(*t.Stream, t.Conn, forwardNumChan, isc2s)
 	}
 	if err != nil {
 		logger.Errorw("Can not forward packet from TCP/UNIX socket to QUIC stream", "error", err.Error())
@@ -410,12 +421,12 @@ func (t *tunnel) conn2Stream(logger log.Logger, wg *sync.WaitGroup, forwardNumCh
 }
 
 // Rewrite io.CopyN function https://pkg.go.dev/io#CopyN
-func (t *tunnel) copyN(dst io.Writer, src io.Reader, n int64, copyNumChan chan<- int) error {
-	return t.copy(dst, io.LimitReader(src, n), copyNumChan)
+func (t *tunnel) copyN(dst io.Writer, src io.Reader, n int64, copyNumChan chan<- int, isc2s bool) error {
+	return t.copy(dst, io.LimitReader(src, 0), copyNumChan, isc2s)
 }
 
 // Rewrite io.Copy function https://pkg.go.dev/io#Copy
-func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int) (err error) {
+func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s bool) (err error) {
 	size := 32 * 1024
 	if l, ok := src.(*io.LimitedReader); ok && int64(size) > l.N {
 		if l.N < 1 {
@@ -424,10 +435,51 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int) (err erro
 			size = int(l.N)
 		}
 	}
-	buf := make([]byte, size)
+	//buf := make([]byte, size)
+	var buf []byte
+	if isc2s {
+		buf = make([]byte, size)
+	} else {
+		buf = make([]byte, 1316)
+	}
 	for {
-		nr, er := src.Read(buf)
+		// 读取数据包的头部信息，获取数据包的长度
+		var packetLength uint32
+		var er error
+		var nr int
+		if isc2s {
+			nr, er = src.Read(buf)
+		} else {
+			err := binary.Read(src, binary.BigEndian, &packetLength)
+			if err != nil {
+				fmt.Println("Failed to read packet length:", err)
+				break
+			}
+			fmt.Println("read packet length:", packetLength)
+			packetData := make([]byte, packetLength)
+			fmt.Println("read packet data")
+			nr, er = io.ReadFull(src, packetData)
+			if er != nil {
+				fmt.Println("Failed to read packet data:", er)
+				break
+			}
+			buf = packetData
+		}
+		//nr, er := src.Read(buf)
+		//nr, er := io.ReadFull(src, buf)
+		fmt.Println("nr")
+		fmt.Println(nr)
+		//fmt.Println(buf[0:nr])
+		fmt.Println("nr")
+		if isc2s && nr > 0 {
+			// Write the length of the message
+			err := binary.Write(dst, binary.BigEndian, uint32(nr))
+			if err != nil {
+				return err
+			}
+		}
 		if nr > 0 {
+			fmt.Println("Write", nr, "bytes")
 			nw, ew := dst.Write(buf[0:nr])
 			if nw < 0 || nr < nw {
 				nw = 0
