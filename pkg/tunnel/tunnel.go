@@ -20,6 +20,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// zzh: add deadline for packet
+const deadline = 300 * time.Millisecond
+
 type UDPConn struct {
 	pc       net.PacketConn
 	remote   net.Addr
@@ -54,15 +57,15 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 			return 0, io.EOF // 如果队列已经关闭，返回EOF错误
 		}
 		n = copy(b, data) // 将数据复制到b
-		fmt.Println("client read")
-		fmt.Println(n)
+		//fmt.Println("client read")
+		//fmt.Println(n)
 	} else {
 		n, _, err := c.pc.ReadFrom(b)
 		if err != nil {
 			return 0, err
 		}
-		fmt.Println("server read")
-		fmt.Println(n)
+		//fmt.Println("server read")
+		//fmt.Println(n)
 		return n, nil
 	}
 	return n, nil
@@ -84,7 +87,7 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 	} else {
 		udpconn, err := dialUDP("udp", &net.UDPAddr{
 			IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
-			Port: 6666,                    // Replace with your source port
+			Port: 5201,                    // Replace with your source port
 		}, c.remote.(*net.UDPAddr))
 		// Create a new UDP co //&net.UDPAddr{
 		//IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
@@ -95,8 +98,8 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 		}
 		//defer udpconn.Close()
 
-		fmt.Println(udpconn.LocalAddr().String())
-		fmt.Println(udpconn.RemoteAddr().String())
+		// fmt.Println(udpconn.LocalAddr().String())
+		// fmt.Println(udpconn.RemoteAddr().String())
 
 		n, err = udpconn.Write(b) //, c.remote.(*net.UDPAddr))
 
@@ -240,6 +243,7 @@ func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 }
 
 type tunnel struct {
+	Session            *quic.Session
 	Stream             *quic.Stream     `json:"-"`
 	Conn               *UDPConn         `json:"-"`
 	Hsh                *HandshakeHelper `json:"-"`
@@ -448,29 +452,43 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 		var er error
 		var nr int
 		if isc2s {
+			arrivetime := (*t.Session).Getdeadlinestatus()
+			fmt.Println("zzh: arriveTime: ", arrivetime)
+			for arrivetime >= time.Duration(deadline) {
+				fmt.Println(arrivetime, arrivetime)
+				fmt.Println("deadline is exceeded")
+				nr, er = src.Read(buf)
+				nr = 0
+			}
+			// for (*t.Session).Getdeadlinestatus() {
+			// 	fmt.Println("deadline is exceeded")
+			// 	nr, er = src.Read(buf)
+			// 	nr = 0
+			// 	// return nil
+			// }
 			nr, er = src.Read(buf)
 		} else {
 			err := binary.Read(src, binary.BigEndian, &packetLength)
 			if err != nil {
-				fmt.Println("Failed to read packet length:", err)
+				//fmt.Println("Failed to read packet length:", err)
 				break
 			}
-			fmt.Println("read packet length:", packetLength)
+			//fmt.Println("read packet length:", packetLength)
 			packetData := make([]byte, packetLength)
-			fmt.Println("read packet data")
+			//fmt.Println("read packet data")
 			nr, er = io.ReadFull(src, packetData)
 			if er != nil {
-				fmt.Println("Failed to read packet data:", er)
+				//fmt.Println("Failed to read packet data:", er)
 				break
 			}
 			buf = packetData
 		}
 		//nr, er := src.Read(buf)
 		//nr, er := io.ReadFull(src, buf)
-		fmt.Println("nr")
-		fmt.Println(nr)
+		//fmt.Println("nr")
+		//fmt.Println(nr)
 		//fmt.Println(buf[0:nr])
-		fmt.Println("nr")
+		//fmt.Println("nr")
 		if isc2s && nr > 0 {
 			// Write the length of the message
 			err := binary.Write(dst, binary.BigEndian, uint32(nr))
@@ -479,7 +497,7 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 			}
 		}
 		if nr > 0 {
-			fmt.Println("Write", nr, "bytes")
+			//fmt.Println("Write", nr, "bytes")
 			nw, ew := dst.Write(buf[0:nr])
 			if nw < 0 || nr < nw {
 				nw = 0
@@ -507,10 +525,11 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 	return err
 }
 
-func NewTunnel(stream *quic.Stream, endpoint string) tunnel {
+func NewTunnel(session *quic.Session, stream *quic.Stream, endpoint string) tunnel {
 	var streamCache = classifier.HeaderCache{}
 	var connCache = classifier.HeaderCache{}
 	return tunnel{
+		Session:     session,
 		Uuid:        uuid.New(),
 		Stream:      stream,
 		Endpoint:    endpoint,

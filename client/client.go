@@ -41,7 +41,8 @@ func (c *ClientEndpoint) Start() {
 	cfgServer := &quic.Config{
 		KeepAlive:   true,
 		CreatePaths: true,
-		Scheduler:   "round_robin", // Or any of the above mentioned scheduler
+		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
+		Scheduler:   "arrive_time",
 		WeightsFile: dir,
 		Training:    false,
 	}
@@ -94,7 +95,7 @@ func (c *ClientEndpoint) Start() {
 	buffer := make([]byte, 65507)
 
 	for {
-		fmt.Println(listener.LocalAddr().String())
+		// fmt.Println(listener.LocalAddr().String())
 		// Accept client application connectin request
 		n, addr, err := listener.ReadFrom(buffer)
 		if err != nil {
@@ -145,7 +146,7 @@ func (c *ClientEndpoint) Start() {
 					hsh := tunnel.NewHandshakeHelper(constants.TokenLength, handshake)
 					hsh.TokenSource = &c.TokenSource
 					// Create a new tunnel for the new client application connection.
-					tun := tunnel.NewTunnel(&stream, constants.ClientEndpoint)
+					tun := tunnel.NewTunnel(&session, &stream, constants.ClientEndpoint)
 					tun.Conn = conn
 					tun.Hsh = &hsh
 					if !tun.HandShake(ctx) {

@@ -65,7 +65,7 @@ func (s *ServerEndpoint) Start() {
 					hsh := tunnel.NewHandshakeHelper(constants.AckMsgLength, handshake)
 					hsh.TokenParser = &s.TokenParser
 
-					tun := tunnel.NewTunnel(&stream, constants.ServerEndpoint)
+					tun := tunnel.NewTunnel(&session, &stream, constants.ServerEndpoint)
 					tun.Hsh = &hsh
 					if !tun.HandShake(ctx) {
 						continue
