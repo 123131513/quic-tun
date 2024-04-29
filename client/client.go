@@ -1,14 +1,18 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 
@@ -42,6 +46,10 @@ func (c *ClientEndpoint) Start() {
 		KeepAlive:   true,
 		CreatePaths: true,
 		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
+		// Scheduler: "low_latency",
+		// Scheduler: "random",
+		// Scheduler: "ecf",
+		// Scheduler: "blest",
 		Scheduler:   "arrive_time",
 		WeightsFile: dir,
 		Training:    false,
@@ -90,6 +98,13 @@ func (c *ClientEndpoint) Start() {
 		panic(err)
 	}
 
+	err = rawConn.Control(func(fd uintptr) {
+		err = unix.SetsockoptInt(int(fd), unix.SOL_IP, unix.IP_RECVORIGDSTADDR, 1)
+	})
+	if err != nil {
+		panic(err)
+	}
+
 	log.Infow("Client endpoint start up successful", "listen address", listener.LocalAddr().String())
 
 	buffer := make([]byte, 65507)
@@ -97,14 +112,54 @@ func (c *ClientEndpoint) Start() {
 	for {
 		// fmt.Println(listener.LocalAddr().String())
 		// Accept client application connectin request
-		n, addr, err := listener.ReadFrom(buffer)
+		oob := make([]byte, 1024)
+		dstAddr := &net.UDPAddr{}
+
+		n, oobn, _, addr, err := udpConn.ReadMsgUDP(buffer, oob)
+		msgs, err := unix.ParseSocketControlMessage(oob[:oobn])
+		if err != nil {
+			panic(err)
+		}
+		for _, msg := range msgs {
+			if msg.Header.Level == unix.SOL_IP && msg.Header.Type == unix.IP_RECVORIGDSTADDR {
+				originalDstRaw := &unix.RawSockaddrInet4{}
+				if err = binary.Read(bytes.NewReader(msg.Data), binary.LittleEndian, originalDstRaw); err != nil {
+					panic(err)
+				}
+
+				switch originalDstRaw.Family {
+				case unix.AF_INET:
+					pp := (*unix.RawSockaddrInet4)(unsafe.Pointer(originalDstRaw))
+					p := (*[2]byte)(unsafe.Pointer(&pp.Port))
+					dstAddr = &net.UDPAddr{
+						IP:   net.IPv4(pp.Addr[0], pp.Addr[1], pp.Addr[2], pp.Addr[3]),
+						Port: int(p[0])<<8 + int(p[1]),
+					}
+
+				case unix.AF_INET6:
+					pp := (*unix.RawSockaddrInet6)(unsafe.Pointer(originalDstRaw))
+					p := (*[2]byte)(unsafe.Pointer(&pp.Port))
+					dstAddr = &net.UDPAddr{
+						IP:   net.IP(pp.Addr[:]),
+						Port: int(p[0])<<8 + int(p[1]),
+						Zone: strconv.Itoa(int(pp.Scope_id)),
+					}
+
+				default:
+					panic("original destination is an unsupported network family")
+				}
+				break
+			}
+		}
+		//fmt.Println(dstAddr.String(), addr)
+		//n, addr, err := listener.ReadFrom(buffer)
 		if err != nil {
 			log.Errorw("Client app connect failed", "error", err.Error())
 		} else {
 			mu.Lock() // 在访问共享资源前锁定
 			conn, ok := conns[addr.String()]
 			if !ok {
-				udpconn, err := net.DialUDP("udp", nil, addr.(*net.UDPAddr))
+				udpconn, err := net.DialUDP("udp", nil, addr) //.(*net.UDPAddr))
 				// Create a new UDP co //&net.UDPAddr{
 				//IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
 				//Port: 6666,                    // Replace with your source port
@@ -118,7 +173,7 @@ func (c *ClientEndpoint) Start() {
 				// fmt.Println(udpconn.RemoteAddr().String())
 
 				udpconn.Close()
-				conn = tunnel.NewUDPConn(listener, addr, false, conns, udpConn)
+				conn = tunnel.NewUDPConn(listener, addr, dstAddr, false, conns, udpConn)
 				conns[addr.String()] = conn
 				conn.Queue <- buffer[:n]
 				logger := log.WithValues(constants.ClientAppAddr, addr.String())
@@ -144,6 +199,8 @@ func (c *ClientEndpoint) Start() {
 						logger.WithContext(parent_ctx),
 						constants.CtxClientAppAddr, addr.String())
 					hsh := tunnel.NewHandshakeHelper(constants.TokenLength, handshake)
+					c.TokenSource = token.NewFixedTokenPlugin("udp:" + dstAddr.String() + ":udp:" + addr.String())
+					//hsh.TokenSource = &tokenSource
 					hsh.TokenSource = &c.TokenSource
 					// Create a new tunnel for the new client application connection.
 					tun := tunnel.NewTunnel(&session, &stream, constants.ClientEndpoint)
@@ -172,6 +229,7 @@ func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHe
 		return false, nil
 	}
 	hsh.SetSendData([]byte(token))
+	fmt.Println("token:", token)
 	_, err = io.CopyN(*stream, hsh, constants.TokenLength)
 	if err != nil {
 		logger.Errorw("Failed to send token", err.Error())

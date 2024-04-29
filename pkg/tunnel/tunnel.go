@@ -26,6 +26,7 @@ const deadline = 300 * time.Millisecond
 type UDPConn struct {
 	pc       net.PacketConn
 	remote   net.Addr
+	dest     net.Addr
 	udpconn  *net.UDPConn
 	Queue    chan []byte
 	closed   bool
@@ -36,10 +37,11 @@ type UDPConn struct {
 	connsMu  sync.Mutex // 新增字段
 }
 
-func NewUDPConn(pc net.PacketConn, remote net.Addr, isServer bool, conns map[string]*UDPConn, udpconn *net.UDPConn) *UDPConn {
+func NewUDPConn(pc net.PacketConn, remote net.Addr, dest net.Addr, isServer bool, conns map[string]*UDPConn, udpconn *net.UDPConn) *UDPConn {
 	return &UDPConn{
 		pc:       pc,
 		remote:   remote,
+		dest:     dest,
 		udpconn:  udpconn,
 		Queue:    make(chan []byte, 32768),
 		closed:   false,
@@ -85,10 +87,11 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 	if c.isServer {
 		return udpConn.Write(b)
 	} else {
-		udpconn, err := dialUDP("udp", &net.UDPAddr{
-			IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
-			Port: 5201,                    // Replace with your source port
-		}, c.remote.(*net.UDPAddr))
+		udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
+		// udpconn, err := dialUDP("udp", &net.UDPAddr{
+		// 	IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
+		// 	Port: 5201,                    // Replace with your source port
+		// }, c.remote.(*net.UDPAddr))
 		// Create a new UDP co //&net.UDPAddr{
 		//IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
 		//Port: 6666,                    // Replace with your source port
@@ -439,13 +442,14 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 			size = int(l.N)
 		}
 	}
-	//buf := make([]byte, size)
-	var buf []byte
-	if isc2s {
-		buf = make([]byte, size)
-	} else {
-		buf = make([]byte, 1316)
-	}
+	buf := make([]byte, size)
+	qbu := make([]byte, size)
+	// var buf []byte
+	// if isc2s {
+	// 	buf = make([]byte, size)
+	// } else {
+	// 	buf = make([]byte, 1316)
+	// }
 	for {
 		// 读取数据包的头部信息，获取数据包的长度
 		var packetLength uint32
@@ -453,12 +457,14 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 		var nr int
 		if isc2s {
 			arrivetime := (*t.Session).Getdeadlinestatus()
-			fmt.Println("zzh: arriveTime: ", arrivetime)
+			//fmt.Println("zzh: arriveTime: ", arrivetime)
 			for arrivetime >= time.Duration(deadline) {
 				fmt.Println(arrivetime, arrivetime)
 				fmt.Println("deadline is exceeded")
-				nr, er = src.Read(buf)
+				nr, er = src.Read(qbu)
+				qbu = qbu[:0]
 				nr = 0
+				arrivetime = (*t.Session).Getdeadlinestatus()
 			}
 			// for (*t.Session).Getdeadlinestatus() {
 			// 	fmt.Println("deadline is exceeded")
@@ -493,6 +499,7 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 			// Write the length of the message
 			err := binary.Write(dst, binary.BigEndian, uint32(nr))
 			if err != nil {
+				fmt.Println("Failed to write packet length:", err)
 				return err
 			}
 		}

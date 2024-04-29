@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -35,7 +36,12 @@ func (s *ServerEndpoint) Start() {
 	os.Setenv("PROJECT_HOME_DIR", dir)
 	// Listen a quic(UDP) socket.
 	cfgServer := &quic.Config{
+		KeepAlive:   true,
 		CreatePaths: true,
+		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
+		//Scheduler:   "arrive_time",
+		WeightsFile: dir,
+		Training:    false,
 	}
 	listener, err := quic.ListenAddr(s.Address, s.TlsConfig, cfgServer)
 	if err != nil {
@@ -87,6 +93,7 @@ func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHe
 		return false, nil
 	}
 	addr, err := (*hsh.TokenParser).ParseToken(hsh.ReceiveData)
+	fmt.Println("addr:", addr)
 	if err != nil {
 		logger.Errorw("Failed to parse token", "error", err.Error())
 		hsh.SetSendData([]byte{constants.ParseTokenError})
@@ -96,7 +103,11 @@ func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHe
 	logger = logger.WithValues(constants.ServerAppAddr, addr)
 	logger.Info("starting connect to server app")
 	sockets := strings.Split(addr, ":")
-	udpAddr, err := net.ResolveUDPAddr("udp", strings.Join(sockets[1:], ":"))
+	// fmt.Println("sockets:", sockets)
+	udpAddr, err := net.ResolveUDPAddr("udp", strings.Join(sockets[1:3], ":"))
+	udpdesAddr, err := net.ResolveUDPAddr("udp", strings.Join(sockets[4:], ":"))
+	// fmt.Println(strings.Join(sockets[1:3], ":"), strings.Join(sockets[4:], ":"))
+	fmt.Println("udpAddr:", udpAddr, "udpdesAddr:", udpdesAddr)
 	conn, err := net.DialUDP(strings.ToLower(sockets[0]), nil, udpAddr)
 	if err != nil {
 		logger.Errorw("Failed to dial server app", "error", err.Error())
@@ -111,6 +122,6 @@ func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHe
 		return false, nil
 	}
 	logger.Info("Handshake successful")
-	udpConn := tunnel.NewUDPConn(conn, conn.RemoteAddr(), true, conns, nil)
+	udpConn := tunnel.NewUDPConn(conn, conn.RemoteAddr(), udpdesAddr, true, conns, nil)
 	return true, udpConn
 }
