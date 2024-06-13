@@ -49,8 +49,8 @@ func (c *ClientEndpoint) Start() {
 		// Scheduler: "low_latency",
 		// Scheduler: "random",
 		// Scheduler: "ecf",
-		// Scheduler: "blest",
-		Scheduler:   "arrive_time",
+		Scheduler: "blest",
+		// Scheduler:   "arrive_time",
 		WeightsFile: dir,
 		Training:    false,
 	}
