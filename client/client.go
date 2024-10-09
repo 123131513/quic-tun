@@ -23,6 +23,7 @@ import (
 	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
 )
 
+// zzh: 为什么要引入这个包？
 var (
 	conns = make(map[string]*(tunnel.UDPConn)) // 声明并初始化conns映射
 	mu    = &sync.Mutex{}                      // 声明并初始化互斥锁
