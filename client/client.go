@@ -46,10 +46,10 @@ func (c *ClientEndpoint) Start() {
 		KeepAlive:   true,
 		CreatePaths: true,
 		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
-		// Scheduler: "low_latency",
+		Scheduler: "low_latency",
 		// Scheduler: "random",
 		// Scheduler: "ecf",
-		Scheduler: "blest",
+		// Scheduler: "blest",
 		// Scheduler:   "arrive_time",
 		WeightsFile: dir,
 		Training:    false,
@@ -175,7 +175,14 @@ func (c *ClientEndpoint) Start() {
 				udpconn.Close()
 				conn = tunnel.NewUDPConn(listener, addr, dstAddr, false, conns, udpConn)
 				conns[addr.String()] = conn
-				conn.Queue <- buffer[:n]
+				// 提取序号（去掉填充部分）
+				// sequenceNumber := strings.TrimRight(string(buffer[:n]), "\x00")
+
+				// fmt.Printf("Received packet from R%s: %s\n", addr, sequenceNumber)
+				// // 正确地将 buffer 拷贝到 Queue 中
+				tempBuffer := make([]byte, n)
+				copy(tempBuffer, buffer[:n])
+				conn.Queue <- tempBuffer
 				logger := log.WithValues(constants.ClientAppAddr, addr.String())
 				logger.Info("Client connection accepted, prepare to entablish tunnel with server endpint for this connection.")
 				go func() {
@@ -213,7 +220,14 @@ func (c *ClientEndpoint) Start() {
 					//}
 				}()
 			} else {
-				conn.Queue <- buffer[:n]
+				// 提取序号（去掉填充部分）
+				// sequenceNumber := strings.TrimRight(string(buffer[:n]), "\x00")
+
+				// fmt.Printf("Received packet from R%s: %s\n", addr, sequenceNumber)
+				// 正确地将 buffer 拷贝到 Queue 中
+				tempBuffer := make([]byte, n)
+				copy(tempBuffer, buffer[:n])
+				conn.Queue <- tempBuffer
 			}
 			mu.Unlock() // 在访问共享资源后解锁
 		}

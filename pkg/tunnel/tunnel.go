@@ -58,6 +58,10 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 		if !ok {
 			return 0, io.EOF // 如果队列已经关闭，返回EOF错误
 		}
+		// 提取序号（去掉填充部分）
+		// sequenceNumber := strings.TrimRight(string(data), "\x00")
+
+		// fmt.Printf("Received packet from %s: %s\n", c.dest, sequenceNumber)
 		n = copy(b, data) // 将数据复制到b
 		//fmt.Println("client read")
 		//fmt.Println(n)
@@ -80,12 +84,28 @@ func (c *UDPConn) ReadFull(b []byte) (n int, err error) {
 func (c *UDPConn) Write(b []byte) (n int, err error) {
 	c.writeMu.Lock()         // 在写入操作前锁定
 	defer c.writeMu.Unlock() // 在写入操作后解锁
-	udpConn, ok := c.pc.(*net.UDPConn)
-	if !ok {
-		return 0, fmt.Errorf("not a UDP connection")
-	}
+	// udpConn, ok := c.pc.(*net.UDPConn)
+	// if !ok {
+	// 	return 0, fmt.Errorf("not a UDP connection")
+	// }
 	if c.isServer {
-		return udpConn.Write(b)
+		udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
+		// udpconn, err := dialUDP("udp", &net.UDPAddr{
+		// 	IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
+		// 	Port: 5201,                    // Replace with your source port
+		// }, c.remote.(*net.UDPAddr))
+		// Create a new UDP co //&net.UDPAddr{
+		//IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
+		//Port: 6666,                    // Replace with your source port
+		//}, addr.(*net.UDPAddr))
+		if err != nil {
+			panic(err)
+		}
+		n, err = udpconn.Write(b) //, c.remote.(*net.UDPAddr))
+
+		udpconn.Close()
+		return n, err
+		// return udpConn.Write(b)
 	} else {
 		udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
 		// udpconn, err := dialUDP("udp", &net.UDPAddr{
@@ -104,6 +124,10 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 		// fmt.Println(udpconn.LocalAddr().String())
 		// fmt.Println(udpconn.RemoteAddr().String())
 
+		// 提取序号（去掉填充部分）
+		// sequenceNumber := strings.TrimRight(string(b), "\x00")
+
+		// fmt.Printf("Received packet from %s: %s\n", c.dest, sequenceNumber)
 		n, err = udpconn.Write(b) //, c.remote.(*net.UDPAddr))
 
 		udpconn.Close()
