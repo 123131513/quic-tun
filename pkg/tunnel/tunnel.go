@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
+	quic "github.com/123131513/newquic"
 	"github.com/google/uuid"
 	"github.com/kungze/quic-tun/pkg/classifier"
 	"github.com/kungze/quic-tun/pkg/constants"
 	"github.com/kungze/quic-tun/pkg/log"
-	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
 	"golang.org/x/sys/unix"
 )
 

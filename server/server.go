@@ -10,11 +10,11 @@ import (
 	"strings"
 	"sync"
 
+	quic "github.com/123131513/newquic"
 	"github.com/kungze/quic-tun/pkg/constants"
 	"github.com/kungze/quic-tun/pkg/log"
 	"github.com/kungze/quic-tun/pkg/token"
 	"github.com/kungze/quic-tun/pkg/tunnel"
-	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
 )
 
 var (

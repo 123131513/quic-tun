@@ -16,11 +16,11 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	quic "github.com/123131513/newquic"
 	"github.com/kungze/quic-tun/pkg/constants"
 	"github.com/kungze/quic-tun/pkg/log"
 	"github.com/kungze/quic-tun/pkg/token"
 	"github.com/kungze/quic-tun/pkg/tunnel"
-	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
 )
 
 // zzh: 为什么要引入这个包？
@@ -46,8 +46,8 @@ func (c *ClientEndpoint) Start() {
 	cfgServer := &quic.Config{
 		KeepAlive:   true,
 		CreatePaths: true,
-		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
-		Scheduler: "low_latency",
+		Scheduler:   "round_robin", // Or any of the above mentioned scheduler
+		// Scheduler: "low_latency",
 		// Scheduler: "random",
 		// Scheduler: "ecf",
 		// Scheduler: "blest",

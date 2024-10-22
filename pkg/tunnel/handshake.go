@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
+	quic "github.com/123131513/newquic"
 	"github.com/kungze/quic-tun/pkg/token"
-	quic "github.com/mutdroco/mpquic_for_video_stream_backend"
 )
 
 type handshakefunc func(context.Context, *quic.Stream, *HandshakeHelper) (bool, *UDPConn)
