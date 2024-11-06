@@ -269,6 +269,42 @@ func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 	return c.pc.SetWriteDeadline(t)
 }
 
+// zzh: add datagram stream
+// DatagramStream wraps DatagramHandler and implements io.Reader and io.Writer.
+type DatagramStream struct {
+	handler quic.Session
+	readBuf []byte
+}
+
+// Write sends data as a datagram.
+func (s *DatagramStream) Write(p []byte) (int, error) {
+	err := s.handler.SendMessage(p)
+	// 提取序号（去掉填充部分）
+	// sequenceNumber := strings.TrimRight(string(p), "\x00")
+
+	// fmt.Printf("Write packet from : %s\n", sequenceNumber)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// Read receives data from a datagram.
+func (s *DatagramStream) Read(p []byte) (int, error) {
+	receivedData, err := s.handler.ReceiveMessage()
+	if err != nil {
+		return 0, err
+	}
+
+	// 提取序号（去掉填充部分）
+	// sequenceNumber := strings.TrimRight(string(receivedData), "\x00")
+	// fmt.Printf("Received packet from : %s\n", sequenceNumber)
+
+	// 将接收到的数据复制到传入的缓冲区 p 中
+	n := copy(p, receivedData)
+	return n, nil
+}
+
 type tunnel struct {
 	Session            *quic.Session
 	Stream             *quic.Stream     `json:"-"`
@@ -291,6 +327,8 @@ type tunnel struct {
 	streamCache *classifier.HeaderCache
 	// Used to cache the header data from udp socket connection
 	connCache *classifier.HeaderCache
+	//zzh: Used to QUIC Datagram
+	DatagramStream *DatagramStream
 }
 
 // Before the tunnel establishment, client endpoint and server endpoint need to
@@ -356,6 +394,31 @@ func (t *tunnel) Establish(ctx context.Context) {
 	ctx, cancle := context.WithCancel(ctx)
 	defer cancle()
 	go t.countTraffic(ctx, steam2conn, conn2stream)
+	go t.analyze(ctx)
+	wg.Wait()
+	DataStore.Delete(t.Uuid)
+	logger.Info("Tunnel closed")
+}
+
+// zzh: new establish function
+func (t *tunnel) Establish_Datagram(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var (
+		Datagram2conn = make(chan int, 32768)
+		conn2Datagram = make(chan int, 32768)
+	)
+	t.fillProperties(ctx)
+	DataStore.Store(t.Uuid, *t)
+	go t.conn2Datagram(logger, &wg, conn2Datagram)
+	go t.Datagram2Conn(logger, &wg, Datagram2conn)
+	logger.Info("Tunnel established successful")
+	// If the tunnel already prepare to close but the analyze
+	// process still is running, we need to cancle it by concle context.
+	ctx, cancle := context.WithCancel(ctx)
+	defer cancle()
+	go t.countTraffic(ctx, Datagram2conn, conn2Datagram)
 	go t.analyze(ctx)
 	wg.Wait()
 	DataStore.Delete(t.Uuid)
@@ -451,6 +514,41 @@ func (t *tunnel) conn2Stream(logger log.Logger, wg *sync.WaitGroup, forwardNumCh
 	}
 }
 
+// zzh: new conn2Datagram function
+func (t *tunnel) Datagram2Conn(logger log.Logger, wg *sync.WaitGroup, forwardNumChan chan<- int) {
+	defer func() {
+		(*t.Stream).Close()
+		(*t.Conn).Close()
+		wg.Done()
+	}()
+	isc2s := false
+	// Cache the first 32768 byte datas, quic-tun will use them to analy the traffic's protocol
+	err := t.copyN_datagram(io.MultiWriter(t.Conn, t.streamCache), t.DatagramStream, classifier.HeaderLength, forwardNumChan, isc2s)
+	if err == nil {
+		err = t.copy_datagram(t.Conn, t.DatagramStream, forwardNumChan, isc2s)
+	}
+	if err != nil {
+		logger.Errorw("Can not forward packet from QUIC Datagram to TCP/UNIX socket", "error", err.Error())
+	}
+}
+
+func (t *tunnel) conn2Datagram(logger log.Logger, wg *sync.WaitGroup, forwardNumChan chan<- int) {
+	defer func() {
+		(*t.Stream).Close()
+		(*t.Conn).Close()
+		wg.Done()
+	}()
+	isc2s := true
+	// Cache the first 32768 byte datas, quic-tun will use them to analy the traffic's protocol
+	err := t.copyN_datagram(io.MultiWriter(t.DatagramStream, t.connCache), t.Conn, classifier.HeaderLength, forwardNumChan, isc2s)
+	if err == nil {
+		err = t.copy_datagram(t.DatagramStream, t.Conn, forwardNumChan, isc2s)
+	}
+	if err != nil {
+		logger.Errorw("Can not forward packet from TCP/UNIX socket to QUIC stream", "error", err.Error())
+	}
+}
+
 // Rewrite io.CopyN function https://pkg.go.dev/io#CopyN
 func (t *tunnel) copyN(dst io.Writer, src io.Reader, n int64, copyNumChan chan<- int, isc2s bool) error {
 	return t.copy(dst, io.LimitReader(src, 0), copyNumChan, isc2s)
@@ -503,9 +601,9 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 				//fmt.Println("Failed to read packet length:", err)
 				break
 			}
-			//fmt.Println("read packet length:", packetLength)
+			fmt.Println("read packet length:", packetLength)
 			packetData := make([]byte, packetLength)
-			//fmt.Println("read packet data")
+			fmt.Println("read packet data")
 			nr, er = io.ReadFull(src, packetData)
 			if er != nil {
 				//fmt.Println("Failed to read packet data:", er)
@@ -556,6 +654,57 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 	return err
 }
 
+// Rewrite io.CopyN function https://pkg.go.dev/io#CopyN
+func (t *tunnel) copyN_datagram(dst io.Writer, src io.Reader, n int64, copyNumChan chan<- int, isc2s bool) error {
+	return t.copy_datagram(dst, io.LimitReader(src, 0), copyNumChan, isc2s)
+}
+
+// Rewrite io.Copy function https://pkg.go.dev/io#Copy
+func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s bool) (err error) {
+	size := 32 * 1024
+	if l, ok := src.(*io.LimitedReader); ok && int64(size) > l.N {
+		if l.N < 1 {
+			size = 1
+		} else {
+			size = int(l.N)
+		}
+	}
+	buf := make([]byte, size)
+	for {
+		nr, er := src.Read(buf)
+		if !isc2s && nr > 0 {
+			// 提取序号（去掉填充部分）
+			// sequenceNumber := strings.TrimRight(string(buf), "\x00")
+
+			// fmt.Printf("s2c packet from : %s\n", sequenceNumber)
+		}
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = errors.New("invalid write result")
+				}
+			}
+			nwChan <- nw
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				err = er
+			}
+			break
+		}
+	}
+	return err
+}
 func NewTunnel(session *quic.Session, stream *quic.Stream, endpoint string) tunnel {
 	var streamCache = classifier.HeaderCache{}
 	var connCache = classifier.HeaderCache{}
@@ -566,6 +715,10 @@ func NewTunnel(session *quic.Session, stream *quic.Stream, endpoint string) tunn
 		Endpoint:    endpoint,
 		streamCache: &streamCache,
 		connCache:   &connCache,
+		// zzh: add DatagramStream
+		DatagramStream: &DatagramStream{
+			handler: *session,
+			readBuf: make([]byte, 1500)},
 	}
 }
 

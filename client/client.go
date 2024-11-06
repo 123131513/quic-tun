@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -46,14 +47,15 @@ func (c *ClientEndpoint) Start() {
 	cfgServer := &quic.Config{
 		KeepAlive:   true,
 		CreatePaths: true,
-		Scheduler:   "round_robin", // Or any of the above mentioned scheduler
+		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
 		// Scheduler: "low_latency",
 		// Scheduler: "random",
 		// Scheduler: "ecf",
 		// Scheduler: "blest",
-		// Scheduler:   "arrive_time",
-		WeightsFile: dir,
-		Training:    false,
+		Scheduler:       "arrive_time",
+		WeightsFile:     dir,
+		Training:        false,
+		EnableDatagrams: true,
 	}
 	session, err := quic.DialAddr(c.ServerEndpointSocket, c.TlsConfig, cfgServer) //&quic.Config{KeepAlive: true})
 	if err != nil {
@@ -110,6 +112,25 @@ func (c *ClientEndpoint) Start() {
 
 	buffer := make([]byte, 65507)
 
+	var firstPacketTime time.Time
+	firstPacketReceived := false
+
+	// 创建或打开日志文件
+	logFile, err := os.OpenFile("packet_log.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer logFile.Close()
+
+	// 状态机状态
+	const (
+		State1 = iota
+		State2
+	)
+	state := State1
+	var lastPacketTime time.Time
+	blockNumber := 1
+
 	for {
 		// fmt.Println(listener.LocalAddr().String())
 		// Accept client application connectin request
@@ -117,6 +138,37 @@ func (c *ClientEndpoint) Start() {
 		dstAddr := &net.UDPAddr{}
 
 		n, oobn, _, addr, err := udpConn.ReadMsgUDP(buffer, oob)
+		// 获取当前时间
+		currentTime := time.Now()
+		if !firstPacketReceived {
+			firstPacketTime = currentTime
+			firstPacketReceived = true
+		}
+		arrivalTime := currentTime.Sub(firstPacketTime).Milliseconds()
+		// logEntry := fmt.Sprintf("Packet received at: %d ms\n", arrivalTime)
+
+		// 状态机逻辑
+		switch state {
+		case State1:
+			state = State2
+			lastPacketTime = currentTime
+		case State2:
+			if currentTime.Sub(lastPacketTime).Milliseconds() <= 1 {
+				// 保持在状态2
+				lastPacketTime = currentTime
+			} else {
+				// 转移到状态1
+				state = State1
+				blockNumber++
+			}
+		}
+
+		// 记录数据包
+		logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d)\n", arrivalTime, blockNumber, state)
+		if _, err := logFile.WriteString(logEntry); err != nil {
+			panic(err)
+		}
+
 		msgs, err := unix.ParseSocketControlMessage(oob[:oobn])
 		if err != nil {
 			panic(err)
@@ -217,7 +269,7 @@ func (c *ClientEndpoint) Start() {
 					if !tun.HandShake(ctx) {
 						return
 					}
-					tun.Establish(ctx)
+					tun.Establish_Datagram(ctx)
 					//}
 				}()
 			} else {

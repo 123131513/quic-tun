@@ -40,8 +40,9 @@ func (s *ServerEndpoint) Start() {
 		CreatePaths: true,
 		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
 		//Scheduler:   "arrive_time",
-		WeightsFile: dir,
-		Training:    false,
+		WeightsFile:     dir,
+		Training:        false,
+		EnableDatagrams: true,
 	}
 	listener, err := quic.ListenAddr(s.Address, s.TlsConfig, cfgServer)
 	if err != nil {
@@ -78,7 +79,7 @@ func (s *ServerEndpoint) Start() {
 					}
 					// After handshake successful the server application's address is established we can add it to log
 					ctx = logger.WithValues(constants.ServerAppAddr, (*tun.Conn).RemoteAddr().String()).WithContext(ctx)
-					go tun.Establish(ctx)
+					go tun.Establish_Datagram(ctx)
 				}
 			}()
 		}
