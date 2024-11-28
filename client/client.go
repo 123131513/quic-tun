@@ -48,11 +48,11 @@ func (c *ClientEndpoint) Start() {
 		KeepAlive:   true,
 		CreatePaths: true,
 		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
-		// Scheduler: "low_latency",
+		Scheduler: "low_latency",
 		// Scheduler: "random",
 		// Scheduler: "ecf",
 		// Scheduler: "blest",
-		Scheduler:       "arrive_time",
+		// Scheduler:       "arrive_time",
 		WeightsFile:     dir,
 		Training:        false,
 		EnableDatagrams: true,
@@ -124,10 +124,15 @@ func (c *ClientEndpoint) Start() {
 
 	// 状态机状态
 	const (
-		State1 = iota
-		State2
+		State1         = constants.State1
+		State2         = constants.State2
+		BlockEndMarker = constants.BlockEndMarker
 	)
-	state := State1
+	// 定义计时器超时时间
+	const timeoutDuration = 1 * time.Millisecond
+	var timer *time.Timer
+
+	state := State2
 	var lastPacketTime time.Time
 	blockNumber := 1
 
@@ -138,6 +143,19 @@ func (c *ClientEndpoint) Start() {
 		dstAddr := &net.UDPAddr{}
 
 		n, oobn, _, addr, err := udpConn.ReadMsgUDP(buffer, oob)
+		// 定义一个函数来处理计时器超时
+		handleTimeout := func() {
+			if state == State2 {
+				state = State1
+				blockNumber++
+				conns[addr.String()].Queue <- []byte(BlockEndMarker)
+				logEntry := fmt.Sprintf("Timeout: Forced transition to State1 (Block %d)\n", blockNumber)
+				if _, err := logFile.WriteString(logEntry); err != nil {
+					panic(err)
+				}
+			}
+		}
+
 		// 获取当前时间
 		currentTime := time.Now()
 		if !firstPacketReceived {
@@ -150,17 +168,44 @@ func (c *ClientEndpoint) Start() {
 		// 状态机逻辑
 		switch state {
 		case State1:
+			// if currentTime == firstPacketTime || currentTime.Sub(lastPacketTime).Milliseconds() < 1 {
 			state = State2
 			lastPacketTime = currentTime
-		case State2:
-			if currentTime.Sub(lastPacketTime).Milliseconds() <= 1 {
-				// 保持在状态2
-				lastPacketTime = currentTime
-			} else {
-				// 转移到状态1
-				state = State1
-				blockNumber++
+			// 重启计时器
+			if timer != nil {
+				timer.Stop()
 			}
+			// 启动计时器
+			timer = time.AfterFunc(timeoutDuration, handleTimeout)
+			// } else {
+			// 	// 转移到状态1
+			// 	state = State1
+			// 	blockNumber++
+			// 	// 在分块结束时添加标记
+			// 	conns[addr.String()].Queue <- []byte(BlockEndMarker)
+			// 	// conn.Queue <- []byte(BlockEndMarker)
+			// 	lastPacketTime = currentTime
+			// }
+
+		case State2:
+			if currentTime.Sub(lastPacketTime).Milliseconds() < 1 {
+			}
+			// 保持在状态2
+			lastPacketTime = currentTime
+			// 重启计时器
+			if timer != nil {
+				timer.Stop()
+			}
+			// 启动计时器
+			timer = time.AfterFunc(timeoutDuration, handleTimeout)
+			// } else {
+			// 	// 转移到状态1
+			// 	state = State1
+			// 	blockNumber++
+			// 	// 在分块结束时添加标记
+			// 	conns[addr.String()].Queue <- []byte(BlockEndMarker)
+			// 	// conn.Queue <- []byte(BlockEndMarker)
+			// }
 		}
 
 		// 记录数据包

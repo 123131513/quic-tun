@@ -670,6 +670,9 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 		}
 	}
 	buf := make([]byte, size)
+	blockCount := 0  // 初始化块计数器
+	packetCount := 0 // 初始化数据包计数器
+	blockSize := 0   // 初始化块大小计数器
 	for {
 		nr, er := src.Read(buf)
 		if !isc2s && nr > 0 {
@@ -678,7 +681,20 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 
 			// fmt.Printf("s2c packet from : %s\n", sequenceNumber)
 		}
+		// 检查是否是块结束标记
+		if string(buf[0:nr]) == constants.BlockEndMarker {
+			blockCount++ // 增加块计数器
+			// 跳过块结束标记，继续读取下一个数据包
+			fmt.Printf("Block end block number: %d, packet count: %d, block size: %d bytes\n", blockCount, packetCount, blockSize)
+			// 重置数据包计数器
+			packetCount = 0
+			blockSize = 0
+			// 跳过块结束标记，继续读取下一个数据包
+			// continue
+		}
 		if nr > 0 {
+			packetCount++   // 增加数据包计数器
+			blockSize += nr // 增加块大小计数器
 			nw, ew := dst.Write(buf[0:nr])
 			if nw < 0 || nr < nw {
 				nw = 0

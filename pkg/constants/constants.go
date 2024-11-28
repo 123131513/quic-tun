@@ -37,3 +37,10 @@ const (
 	ClientEndpoint = "client"
 	ServerEndpoint = "server"
 )
+
+// 状态机状态
+const (
+	State1 = iota
+	State2
+	BlockEndMarker = "BLOCK_END"
+)
