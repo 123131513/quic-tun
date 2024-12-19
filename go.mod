@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	github.com/123131513/newquic v0.0.0-20240919124602-dba7b3be664e
+	github.com/123131513/newquic v0.0.0-20241128093033-0b6732a40b18
 	github.com/google/uuid v1.6.0
 	github.com/spf13/viper v1.18.2
 	go.uber.org/zap v1.27.0
