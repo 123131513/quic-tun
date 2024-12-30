@@ -135,6 +135,15 @@ func (c *ClientEndpoint) Start() {
 	state := State2
 	var lastPacketTime time.Time
 	blockNumber := 1
+	currentBlockSize := 0
+	timeoutChan := make(chan func())
+
+	// 启动一个 goroutine 顺序处理超时事件
+	go func() {
+		for handleTimeout := range timeoutChan {
+			handleTimeout()
+		}
+	}()
 
 	for {
 		// fmt.Println(listener.LocalAddr().String())
@@ -147,12 +156,23 @@ func (c *ClientEndpoint) Start() {
 		handleTimeout := func() {
 			if state == State2 {
 				state = State1
-				blockNumber++
 				conns[addr.String()].Queue <- []byte(BlockEndMarker)
-				logEntry := fmt.Sprintf("Timeout: Forced transition to State1 (Block %d)\n", blockNumber)
+				blockNumber++
+				logEntry := fmt.Sprintf("Timeout: Forced transition to State1 (Block %d) currentBlockSize %d\n", blockNumber, currentBlockSize)
+				// BlockSize := currentBlockSize
+				currentBlockSize = 0
 				if _, err := logFile.WriteString(logEntry); err != nil {
 					panic(err)
 				}
+				// 记录当前数据块的大小
+				tunnel.BlockSizesMutex.Lock()
+				fmt.Printf("blockNumber: %d and len %d\n", blockNumber, len(tunnel.BlockSizes))
+				tunnel.BlockSizes = append(tunnel.BlockSizes, 0)
+				// tunnel.BlockSizes[blockNumber-2] = BlockSize
+				tunnel.BlockSizes[blockNumber-2] = currentBlockSize
+				tunnel.BlockSizesMutex.Unlock()
+				// 重置当前数据块大小
+				currentBlockSize = 0
 			}
 		}
 
@@ -176,7 +196,10 @@ func (c *ClientEndpoint) Start() {
 				timer.Stop()
 			}
 			// 启动计时器
-			timer = time.AfterFunc(timeoutDuration, handleTimeout)
+			// timer = time.AfterFunc(timeoutDuration, handleTimeout)
+			timer = time.AfterFunc(timeoutDuration, func() {
+				timeoutChan <- handleTimeout
+			})
 			// } else {
 			// 	// 转移到状态1
 			// 	state = State1
@@ -197,7 +220,11 @@ func (c *ClientEndpoint) Start() {
 				timer.Stop()
 			}
 			// 启动计时器
-			timer = time.AfterFunc(timeoutDuration, handleTimeout)
+			// timer = time.AfterFunc(timeoutDuration, handleTimeout)
+			// 启动计时器
+			timer = time.AfterFunc(timeoutDuration, func() {
+				timeoutChan <- handleTimeout
+			})
 			// } else {
 			// 	// 转移到状态1
 			// 	state = State1
@@ -213,6 +240,10 @@ func (c *ClientEndpoint) Start() {
 		if _, err := logFile.WriteString(logEntry); err != nil {
 			panic(err)
 		}
+
+		// 更新当前块的大小
+		packetSize := n // 假设 packetData 是当前数据包的数据
+		currentBlockSize += packetSize
 
 		msgs, err := unix.ParseSocketControlMessage(oob[:oobn])
 		if err != nil {

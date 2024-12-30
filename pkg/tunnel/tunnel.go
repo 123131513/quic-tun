@@ -20,6 +20,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var (
+	BlockSizes      []int        // 全局数组，用于记录每个数据块的大小
+	BlockSizesMutex sync.RWMutex // 读写互斥锁，用于保护 BlockSizes
+)
+
 // zzh: add deadline for packet
 const deadline = 300 * time.Millisecond
 
@@ -278,7 +283,13 @@ type DatagramStream struct {
 
 // Write sends data as a datagram.
 func (s *DatagramStream) Write(p []byte) (int, error) {
-	err := s.handler.SendMessage(p)
+	BlockSizesMutex.RLock()
+	copyBlockSizes := make([]int, len(BlockSizes))
+	copy(copyBlockSizes, BlockSizes)
+	BlockSizesMutex.RUnlock()
+
+	// fmt.Println("Write packet", copyBlockSizes)
+	err := s.handler.SendMessage(p, copyBlockSizes)
 	// 提取序号（去掉填充部分）
 	// sequenceNumber := strings.TrimRight(string(p), "\x00")
 
