@@ -48,11 +48,11 @@ func (c *ClientEndpoint) Start() {
 		KeepAlive:   true,
 		CreatePaths: true,
 		// Scheduler:   "round_robin", // Or any of the above mentioned scheduler
-		Scheduler: "low_latency",
+		// Scheduler: "low_latency",
 		// Scheduler: "random",
 		// Scheduler: "ecf",
 		// Scheduler: "blest",
-		// Scheduler:       "arrive_time",
+		Scheduler:       "arrive_time",
 		WeightsFile:     dir,
 		Training:        false,
 		EnableDatagrams: true,

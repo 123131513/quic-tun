@@ -2,15 +2,15 @@
 ip rule add fwmark 1 lookup 100
 ip route add local 0.0.0.0/0 dev lo table 100
 
-ip rule add from 10.0.1.1 table 1
-ip rule add from 10.0.2.1 table 2
+# ip rule add from 10.0.1.1 table 1
+# ip rule add from 10.0.2.1 table 2
 # ip rule add from 10.0.3.1 table 3
 
-ip route add 10.0.1.0/24 dev r1-eth1 scope link table 1
-ip route add default via 10.0.1.2 dev r1-eth1 table 1
+# ip route add 10.0.1.0/24 dev r1-eth1 scope link table 1
+# ip route add default via 10.0.1.2 dev r1-eth1 table 1
 
-ip route add 10.0.2.0/24 dev r1-eth2 scope link table 2
-ip route add default via 10.0.2.2 dev r1-eth2 table 2
+# ip route add 10.0.2.0/24 dev r1-eth2 scope link table 2
+# ip route add default via 10.0.2.2 dev r1-eth2 table 2
 
 # ip route add 10.0.3.0/24 dev r1-eth3 scope link table 3
 # ip route add default via 10.0.3.2 dev r1-eth3 table 3
