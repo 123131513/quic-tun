@@ -160,7 +160,7 @@ func (c *ClientEndpoint) Start() {
 				blockNumber++
 				logEntry := fmt.Sprintf("Timeout: Forced transition to State1 (Block %d) currentBlockSize %d\n", blockNumber, currentBlockSize)
 				// BlockSize := currentBlockSize
-				currentBlockSize = 0
+				// currentBlockSize = 0
 				if _, err := logFile.WriteString(logEntry); err != nil {
 					panic(err)
 				}
