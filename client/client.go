@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -26,8 +27,9 @@ import (
 
 // zzh: 为什么要引入这个包？
 var (
-	conns = make(map[string]*(tunnel.UDPConn)) // 声明并初始化conns映射
-	mu    = &sync.Mutex{}                      // 声明并初始化互斥锁
+	conns              = make(map[string]*(tunnel.UDPConn)) // 声明并初始化conns映射
+	mu                 = &sync.Mutex{}                      // 声明并初始化互斥锁
+	resetScheduledFlag atomic.Bool                          // 新增原子标记
 )
 
 type ClientEndpoint struct {
@@ -43,6 +45,9 @@ func (c *ClientEndpoint) Start() {
 		panic(err)
 	}
 	os.Setenv("PROJECT_HOME_DIR", dir)
+
+	tunnel.BlockSizes = make(map[string][]int)              // 声明并初始化BlockSizes映射
+	tunnel.BlockSizesMutex = make(map[string]*sync.RWMutex) // 声明并初始化互斥锁
 	// Dial server endpoint
 	cfgServer := &quic.Config{
 		KeepAlive:   true,
@@ -112,8 +117,8 @@ func (c *ClientEndpoint) Start() {
 
 	buffer := make([]byte, 65507)
 
-	var firstPacketTime time.Time
-	firstPacketReceived := false
+	firstPacketTime := make(map[string]time.Time)
+	firstPacketReceived := make(map[string]bool)
 
 	// 创建或打开日志文件
 	logFile, err := os.OpenFile("packet_log.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -130,12 +135,15 @@ func (c *ClientEndpoint) Start() {
 	)
 	// 定义计时器超时时间
 	const timeoutDuration = 1 * time.Millisecond
-	var timer *time.Timer
+	timer := make(map[string]*time.Timer)
 
-	state := State2
-	var lastPacketTime time.Time
-	blockNumber := 1
-	currentBlockSize := 0
+	// state := State2
+	state := make(map[string]int)
+	lastPacketTime := make(map[string]time.Time)
+	currentTime := make(map[string]time.Time)
+	arrivalTime := make(map[string]int)
+	blockNumber := make(map[string]int)
+	currentBlockSize := make(map[string]int)
 	timeoutChan := make(chan func())
 
 	// 启动一个 goroutine 顺序处理超时事件
@@ -152,52 +160,80 @@ func (c *ClientEndpoint) Start() {
 		dstAddr := &net.UDPAddr{}
 
 		n, oobn, _, addr, err := udpConn.ReadMsgUDP(buffer, oob)
+		sequenceNumber := strings.TrimRight(string(buffer), "\x00")
 		// 定义一个函数来处理计时器超时
 		handleTimeout := func() {
-			if state == State2 {
-				state = State1
+			if state[addr.String()] == State2 {
+				state[addr.String()] = State1
+				fmt.Println("get conn lock before in handleTimeout")
+				mu.Lock()
+				defer mu.Unlock()
+				fmt.Println("get conn lock after in handleTimeout")
 				conns[addr.String()].Queue <- []byte(BlockEndMarker)
-				blockNumber++
-				logEntry := fmt.Sprintf("Timeout: Forced transition to State1 (Block %d) currentBlockSize %d\n", blockNumber, currentBlockSize)
+				blockNumber[addr.String()]++
+				logEntry := fmt.Sprintf("Timeout: Forced transition to State1 (Block %d) currentBlockSize %d\n", blockNumber[addr.String()], currentBlockSize[addr.String()])
 				// BlockSize := currentBlockSize
 				// currentBlockSize = 0
 				if _, err := logFile.WriteString(logEntry); err != nil {
 					panic(err)
 				}
 				// 记录当前数据块的大小
-				tunnel.BlockSizesMutex.Lock()
-				fmt.Printf("blockNumber: %d and len %d\n", blockNumber, len(tunnel.BlockSizes))
-				tunnel.BlockSizes = append(tunnel.BlockSizes, 0)
+				fmt.Println("tunnel.BlockSizesMutex[addr.String()].Lock()")
+				tunnel.BlockSizesMutex[addr.String()].Lock()
+				fmt.Println("tunnel.BlockSizesMutex[addr.String()].Lock() done")
+				fmt.Printf("blockNumber: %d and len %d\n", blockNumber[addr.String()], len(tunnel.BlockSizes[addr.String()]))
+				tunnel.BlockSizes[addr.String()] = append(tunnel.BlockSizes[addr.String()], 0)
+				// fmt.Println("append block size")
 				// tunnel.BlockSizes[blockNumber-2] = BlockSize
-				tunnel.BlockSizes[blockNumber-2] = currentBlockSize
-				tunnel.BlockSizesMutex.Unlock()
+				tunnel.BlockSizes[addr.String()][blockNumber[addr.String()]-1] = currentBlockSize[addr.String()]
+				// fmt.Println("set block size")
+				tunnel.BlockSizesMutex[addr.String()].Unlock()
+				// fmt.Println("unlock")
 				// 重置当前数据块大小
-				currentBlockSize = 0
+				currentBlockSize[addr.String()] = 0
+				fmt.Println("reset currentBlockSize")
 			}
 		}
 
-		// 获取当前时间
-		currentTime := time.Now()
-		if !firstPacketReceived {
-			firstPacketTime = currentTime
-			firstPacketReceived = true
+		fmt.Println("timer before")
+		_, flag_time := firstPacketTime[addr.String()]
+		fmt.Println("timer after")
+		if !flag_time {
+			fmt.Println("firstPacketTime before")
+			firstPacketTime[addr.String()] = time.Now()
+			firstPacketReceived[addr.String()] = true
+			currentTime[addr.String()] = time.Now()
+			arrivalTime[addr.String()] = 0
+			timer[addr.String()] = nil
+			state[addr.String()] = State2
+			lastPacketTime[addr.String()] = currentTime[addr.String()]
+			fmt.Println("firstPacketTime after")
+		} else {
+			currentTime[addr.String()] = time.Now()
+			arrivalTime[addr.String()] = int(currentTime[addr.String()].Sub(firstPacketTime[addr.String()]).Milliseconds())
 		}
-		arrivalTime := currentTime.Sub(firstPacketTime).Milliseconds()
+		// 获取当前时间
+		// currentTime := time.Now()
+		// if !firstPacketReceived {
+		// 	firstPacketTime = currentTime
+		// 	firstPacketReceived = true
+		// }
+		// arrivalTime := currentTime.Sub(firstPacketTime).Milliseconds()
 		// logEntry := fmt.Sprintf("Packet received at: %d ms\n", arrivalTime)
 
 		// 状态机逻辑
-		switch state {
+		switch state[addr.String()] {
 		case State1:
 			// if currentTime == firstPacketTime || currentTime.Sub(lastPacketTime).Milliseconds() < 1 {
-			state = State2
-			lastPacketTime = currentTime
+			state[addr.String()] = State2
+			lastPacketTime[addr.String()] = currentTime[addr.String()]
 			// 重启计时器
-			if timer != nil {
-				timer.Stop()
+			if timer[addr.String()] != nil {
+				timer[addr.String()].Stop()
 			}
 			// 启动计时器
 			// timer = time.AfterFunc(timeoutDuration, handleTimeout)
-			timer = time.AfterFunc(timeoutDuration, func() {
+			timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
 				timeoutChan <- handleTimeout
 			})
 			// } else {
@@ -211,18 +247,18 @@ func (c *ClientEndpoint) Start() {
 			// }
 
 		case State2:
-			if currentTime.Sub(lastPacketTime).Milliseconds() < 1 {
+			if currentTime[addr.String()].Sub(lastPacketTime[addr.String()]).Milliseconds() < 1 {
 			}
 			// 保持在状态2
-			lastPacketTime = currentTime
+			lastPacketTime[addr.String()] = currentTime[addr.String()]
 			// 重启计时器
-			if timer != nil {
-				timer.Stop()
+			if timer[addr.String()] != nil {
+				timer[addr.String()].Stop()
 			}
 			// 启动计时器
 			// timer = time.AfterFunc(timeoutDuration, handleTimeout)
 			// 启动计时器
-			timer = time.AfterFunc(timeoutDuration, func() {
+			timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
 				timeoutChan <- handleTimeout
 			})
 			// } else {
@@ -236,14 +272,18 @@ func (c *ClientEndpoint) Start() {
 		}
 
 		// 记录数据包
-		logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d)\n", arrivalTime, blockNumber, state)
+		logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d) %s\n", arrivalTime[addr.String()], blockNumber[addr.String()], state[addr.String()], sequenceNumber)
 		if _, err := logFile.WriteString(logEntry); err != nil {
 			panic(err)
 		}
 
 		// 更新当前块的大小
 		packetSize := n // 假设 packetData 是当前数据包的数据
-		currentBlockSize += packetSize
+		_, ok := currentBlockSize[addr.String()]
+		if !ok {
+			currentBlockSize[addr.String()] = 0
+		}
+		currentBlockSize[addr.String()] += packetSize
 
 		msgs, err := unix.ParseSocketControlMessage(oob[:oobn])
 		if err != nil {
@@ -280,12 +320,14 @@ func (c *ClientEndpoint) Start() {
 				break
 			}
 		}
-		//fmt.Println(dstAddr.String(), addr)
+		// fmt.Println(dstAddr.String(), addr)
 		//n, addr, err := listener.ReadFrom(buffer)
 		if err != nil {
 			log.Errorw("Client app connect failed", "error", err.Error())
 		} else {
+			fmt.Println("get conn lock before in main")
 			mu.Lock() // 在访问共享资源前锁定
+			fmt.Println("get conn lock after in main")
 			conn, ok := conns[addr.String()]
 			if !ok {
 				udpconn, err := net.DialUDP("udp", nil, addr) //.(*net.UDPAddr))
@@ -298,12 +340,17 @@ func (c *ClientEndpoint) Start() {
 				}
 				//defer udpconn.Close()
 
-				// fmt.Println(udpconn.LocalAddr().String())
-				// fmt.Println(udpconn.RemoteAddr().String())
+				fmt.Println(udpconn.LocalAddr().String())
+				fmt.Println(udpconn.RemoteAddr().String())
 
 				udpconn.Close()
 				conn = tunnel.NewUDPConn(listener, addr, dstAddr, false, conns, udpConn)
 				conns[addr.String()] = conn
+				tunnel.BlockSizes[addr.String()] = make([]int, 0)
+				tunnel.BlockSizesMutex[addr.String()] = &sync.RWMutex{}
+				blockNumber[addr.String()] = 0
+				fmt.Println("New connection from", addr.String())
+				session.InitConnection(addr.String())
 				// 提取序号（去掉填充部分）
 				// sequenceNumber := strings.TrimRight(string(buffer[:n]), "\x00")
 
@@ -352,11 +399,12 @@ func (c *ClientEndpoint) Start() {
 				// 提取序号（去掉填充部分）
 				// sequenceNumber := strings.TrimRight(string(buffer[:n]), "\x00")
 
-				// fmt.Printf("Received packet from R%s: %s\n", addr, sequenceNumber)
+				fmt.Printf("Received packet from R%s\n", sequenceNumber)
 				// 正确地将 buffer 拷贝到 Queue 中
 				tempBuffer := make([]byte, n)
 				copy(tempBuffer, buffer[:n])
 				conn.Queue <- tempBuffer
+				fmt.Printf("Received packet tempBuffer after\n")
 			}
 			mu.Unlock() // 在访问共享资源后解锁
 		}

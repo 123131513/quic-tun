@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,8 +22,8 @@ import (
 )
 
 var (
-	BlockSizes      []int        // 全局数组，用于记录每个数据块的大小
-	BlockSizesMutex sync.RWMutex // 读写互斥锁，用于保护 BlockSizes
+	BlockSizes      map[string][]int         // 全局数组，用于记录每个数据块的大小
+	BlockSizesMutex map[string]*sync.RWMutex // 读写互斥锁，用于保护 BlockSizes
 )
 
 // zzh: add deadline for packet
@@ -40,6 +41,8 @@ type UDPConn struct {
 	isServer bool
 	conns    map[string]*UDPConn
 	connsMu  sync.Mutex // 新增字段
+	// zzh: add current port
+	port int
 }
 
 func NewUDPConn(pc net.PacketConn, remote net.Addr, dest net.Addr, isServer bool, conns map[string]*UDPConn, udpconn *net.UDPConn) *UDPConn {
@@ -54,12 +57,15 @@ func NewUDPConn(pc net.PacketConn, remote net.Addr, dest net.Addr, isServer bool
 		writeMu:  sync.Mutex{},
 		isServer: isServer,
 		conns:    conns,
+		port:     0,
 	}
 }
 
 func (c *UDPConn) Read(b []byte) (n int, err error) {
+	fmt.Println("UDP read")
 	if !c.isServer {
 		data, ok := <-c.Queue // 从队列中读取数据
+		fmt.Println("UDP read from queue")
 		if !ok {
 			return 0, io.EOF // 如果队列已经关闭，返回EOF错误
 		}
@@ -72,6 +78,7 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 		//fmt.Println(n)
 	} else {
 		n, _, err := c.pc.ReadFrom(b)
+		fmt.Println("UDP read from pc")
 		if err != nil {
 			return 0, err
 		}
@@ -89,12 +96,27 @@ func (c *UDPConn) ReadFull(b []byte) (n int, err error) {
 func (c *UDPConn) Write(b []byte) (n int, err error) {
 	c.writeMu.Lock()         // 在写入操作前锁定
 	defer c.writeMu.Unlock() // 在写入操作后解锁
+	var newAddr *net.UDPAddr
 	// udpConn, ok := c.pc.(*net.UDPConn)
 	// if !ok {
 	// 	return 0, fmt.Errorf("not a UDP connection")
 	// }
+	// 提取 IP 地址和给定的端口，创建新的 UDP 地址
+	udpAddr, _ := c.dest.(*net.UDPAddr)
+	if c.port != 0 {
+		newAddr = &net.UDPAddr{
+			IP:   udpAddr.IP,
+			Port: c.port,
+		}
+	} else {
+		newAddr = udpAddr
+	}
+
+	fmt.Println("newAddr and dest", newAddr.String(), c.dest.String())
+
 	if c.isServer {
-		udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
+		// udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
+		udpconn, err := dialUDP("udp", newAddr, c.remote.(*net.UDPAddr))
 		// udpconn, err := dialUDP("udp", &net.UDPAddr{
 		// 	IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
 		// 	Port: 5201,                    // Replace with your source port
@@ -112,7 +134,8 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 		return n, err
 		// return udpConn.Write(b)
 	} else {
-		udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
+		// udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
+		udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), newAddr)
 		// udpconn, err := dialUDP("udp", &net.UDPAddr{
 		// 	IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
 		// 	Port: 5201,                    // Replace with your source port
@@ -277,19 +300,23 @@ func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 // zzh: add datagram stream
 // DatagramStream wraps DatagramHandler and implements io.Reader and io.Writer.
 type DatagramStream struct {
-	handler quic.Session
-	readBuf []byte
+	handler       quic.Session
+	readBuf       []byte
+	ClientAppAddr string // zzh: add ClientAppAddr
 }
 
 // Write sends data as a datagram.
 func (s *DatagramStream) Write(p []byte) (int, error) {
-	BlockSizesMutex.RLock()
-	copyBlockSizes := make([]int, len(BlockSizes))
-	copy(copyBlockSizes, BlockSizes)
-	BlockSizesMutex.RUnlock()
+	fmt.Println("datagram write")
+	// fmt.Println(s.ClientAppAddr)
+	BlockSizesMutex[s.ClientAppAddr].RLock()
+	copyBlockSizes := make([]int, len(BlockSizes[s.ClientAppAddr]))
+	copy(copyBlockSizes, BlockSizes[s.ClientAppAddr])
+	BlockSizesMutex[s.ClientAppAddr].RUnlock()
 
-	// fmt.Println("Write packet", copyBlockSizes)
-	err := s.handler.SendMessage(p, copyBlockSizes)
+	fmt.Println("Write packet")
+	err := s.handler.SendMessage(s.ClientAppAddr, p, copyBlockSizes)
+	fmt.Println("Write packet end")
 	// 提取序号（去掉填充部分）
 	// sequenceNumber := strings.TrimRight(string(p), "\x00")
 
@@ -302,6 +329,7 @@ func (s *DatagramStream) Write(p []byte) (int, error) {
 
 // Read receives data from a datagram.
 func (s *DatagramStream) Read(p []byte) (int, error) {
+	fmt.Println("datagram read")
 	receivedData, err := s.handler.ReceiveMessage()
 	if err != nil {
 		return 0, err
@@ -483,6 +511,8 @@ func (t *tunnel) fillProperties(ctx context.Context) {
 	t.StreamID = (*t.Stream).StreamID()
 	if t.Endpoint == constants.ClientEndpoint {
 		t.ClientAppAddr = (*t.Conn).RemoteAddr().String()
+		t.DatagramStream.ClientAppAddr = t.ClientAppAddr
+		// fmt.Println("tunnel fillProperties", t.ClientAppAddr)
 	}
 	if t.Endpoint == constants.ServerEndpoint {
 		t.ServerAppAddr = (*t.Conn).RemoteAddr().String()
@@ -681,6 +711,101 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 		}
 	}
 	buf := make([]byte, size)
+	// var buf []byte
+	// if isc2s {
+	// 	buf = make([]byte, size)
+	// } else {
+	// 	buf = make([]byte, 1316)
+	// }
+	for {
+		// 读取数据包的头部信息，获取数据包的长度
+		var packetaddr uint32
+		var er error
+		var nr int
+		// 读取数据
+		fmt.Println("Read packet")
+		nr, er = src.Read(buf)
+		if er != nil {
+			fmt.Println("Failed to read packet:", er, nr, isc2s)
+			// return
+		} else {
+			fmt.Println("Read packet:", nr, isc2s)
+			sequenceNumber := strings.TrimRight(string(buf), "\x00")
+
+			fmt.Printf("s2c packet from : %s\n", sequenceNumber)
+		}
+
+		if !isc2s {
+			// 读取前4个字节作为端口号
+			if nr >= 4 {
+				packetaddr = uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 | uint32(buf[3])
+				// fmt.Println("read packet addr:", packetaddr)
+				t.Conn.port = int(packetaddr)
+				// 剩余的数据部分
+				buf = buf[4:nr]
+				nr = len(buf)
+			} else {
+				fmt.Println("Packet length is less than 4 bytes")
+				// return
+			}
+		}
+
+		var data []byte
+		if isc2s && nr > 0 && string(buf[0:nr]) != constants.BlockEndMarker {
+			// 获取远程地址的端口号
+			udpAddr, ok := t.Conn.RemoteAddr().(*net.UDPAddr)
+			if !ok {
+				// fmt.Println("unknown address type")
+				// return
+			}
+			port := uint32(udpAddr.Port)
+			// fmt.Println("read packet port:", port)
+			// 将端口号和数据拼接在一起
+			data = append([]byte{}, byte(port>>24), byte(port>>16), byte(port>>8), byte(port)) // 4字节的端口号
+		}
+		data = append(data, buf[:nr]...) // 拼接数据
+		nr = len(data)
+		if nr > 0 {
+			fmt.Println("Write", nr, "bytes")
+			nw, ew := dst.Write(data)
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = errors.New("invalid write result")
+				}
+			}
+			nwChan <- nw
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				err = er
+			}
+			break
+		}
+	}
+	fmt.Println("copy_datagram end")
+	return err
+}
+
+// Rewrite io.Copy function https://pkg.go.dev/io#Copy
+func (t *tunnel) copy_datagram_1(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s bool) (err error) {
+	size := 32 * 1024
+	if l, ok := src.(*io.LimitedReader); ok && int64(size) > l.N {
+		if l.N < 1 {
+			size = 1
+		} else {
+			size = int(l.N)
+		}
+	}
+	buf := make([]byte, size)
 	blockCount := 0  // 初始化块计数器
 	packetCount := 0 // 初始化数据包计数器
 	blockSize := 0   // 初始化块大小计数器
@@ -732,6 +857,7 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 	}
 	return err
 }
+
 func NewTunnel(session *quic.Session, stream *quic.Stream, endpoint string) tunnel {
 	var streamCache = classifier.HeaderCache{}
 	var connCache = classifier.HeaderCache{}

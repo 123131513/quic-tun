@@ -18,6 +18,14 @@ ip route add local 0.0.0.0/0 dev lo table 100
 iptables -t mangle -F
 
 iptables -t mangle -N GOST
+
+# 排除DNS服务器的流量
+iptables -t mangle -A GOST -p udp -d 8.8.8.8 -j RETURN
+iptables -t mangle -A GOST -p udp -d 8.8.4.4 -j RETURN
+iptables -t mangle -A GOST -p udp -d 1.1.1.1 -j RETURN
+iptables -t mangle -A GOST -p udp -d 9.9.9.9 -j RETURN
+iptables -t mangle -A GOST -p udp -d 114.114.114.114 -j RETURN
+
 iptables -t mangle -A GOST -p udp -d 127.0.0.0/8 -j RETURN
 iptables -t mangle -A GOST -p udp -d 255.255.255.255/32 -j RETURN
 iptables -t mangle -A GOST -p udp -d 192.168.0.0/16 -j RETURN
@@ -31,6 +39,14 @@ iptables -t mangle -A GOST -p udp -j TPROXY --tproxy-mark 0x1/0x1 --on-ip 127.0.
 iptables -t mangle -A PREROUTING -p udp -j GOST
 
 iptables -t mangle -N GOST_LOCAL
+
+# 排除DNS服务器的流量
+iptables -t mangle -A GOST -p udp -d 8.8.8.8 -j RETURN
+iptables -t mangle -A GOST -p udp -d 8.8.4.4 -j RETURN
+iptables -t mangle -A GOST -p udp -d 1.1.1.1 -j RETURN
+iptables -t mangle -A GOST -p udp -d 9.9.9.9 -j RETURN
+iptables -t mangle -A GOST -p udp -d 114.114.114.114 -j RETURN
+
 iptables -t mangle -A GOST_LOCAL -p udp -d 127.0.0.0/8 -j RETURN
 iptables -t mangle -A GOST_LOCAL -p udp -d 255.255.255.255/32 -j RETURN
 iptables -t mangle -A GOST_LOCAL -p udp -d 192.168.0.0/16 -j RETURN
