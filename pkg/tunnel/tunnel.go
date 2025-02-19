@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -62,10 +61,10 @@ func NewUDPConn(pc net.PacketConn, remote net.Addr, dest net.Addr, isServer bool
 }
 
 func (c *UDPConn) Read(b []byte) (n int, err error) {
-	fmt.Println("UDP read")
+	// fmt.Println("UDP read")
 	if !c.isServer {
 		data, ok := <-c.Queue // 从队列中读取数据
-		fmt.Println("UDP read from queue")
+		// fmt.Println("UDP read from queue")
 		if !ok {
 			return 0, io.EOF // 如果队列已经关闭，返回EOF错误
 		}
@@ -78,7 +77,7 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 		//fmt.Println(n)
 	} else {
 		n, _, err := c.pc.ReadFrom(b)
-		fmt.Println("UDP read from pc")
+		// fmt.Println("UDP read from pc")
 		if err != nil {
 			return 0, err
 		}
@@ -112,7 +111,7 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 		newAddr = udpAddr
 	}
 
-	fmt.Println("newAddr and dest", newAddr.String(), c.dest.String())
+	// fmt.Println("newAddr and dest", newAddr.String(), c.dest.String())
 
 	if c.isServer {
 		// udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
@@ -307,16 +306,16 @@ type DatagramStream struct {
 
 // Write sends data as a datagram.
 func (s *DatagramStream) Write(p []byte) (int, error) {
-	fmt.Println("datagram write")
+	// fmt.Println("datagram write")
 	// fmt.Println(s.ClientAppAddr)
 	BlockSizesMutex[s.ClientAppAddr].RLock()
 	copyBlockSizes := make([]int, len(BlockSizes[s.ClientAppAddr]))
 	copy(copyBlockSizes, BlockSizes[s.ClientAppAddr])
 	BlockSizesMutex[s.ClientAppAddr].RUnlock()
 
-	fmt.Println("Write packet")
+	// fmt.Println("Write packet")
 	err := s.handler.SendMessage(s.ClientAppAddr, p, copyBlockSizes)
-	fmt.Println("Write packet end")
+	// fmt.Println("Write packet end")
 	// 提取序号（去掉填充部分）
 	// sequenceNumber := strings.TrimRight(string(p), "\x00")
 
@@ -329,7 +328,7 @@ func (s *DatagramStream) Write(p []byte) (int, error) {
 
 // Read receives data from a datagram.
 func (s *DatagramStream) Read(p []byte) (int, error) {
-	fmt.Println("datagram read")
+	// fmt.Println("datagram read")
 	receivedData, err := s.handler.ReceiveMessage()
 	if err != nil {
 		return 0, err
@@ -710,7 +709,7 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 			size = int(l.N)
 		}
 	}
-	buf := make([]byte, size)
+	// buf := make([]byte, size)
 	// var buf []byte
 	// if isc2s {
 	// 	buf = make([]byte, size)
@@ -718,21 +717,19 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 	// 	buf = make([]byte, 1316)
 	// }
 	for {
+		buf := make([]byte, size)
 		// 读取数据包的头部信息，获取数据包的长度
 		var packetaddr uint32
 		var er error
 		var nr int
 		// 读取数据
-		fmt.Println("Read packet")
+		// fmt.Println("Read packet")
 		nr, er = src.Read(buf)
 		if er != nil {
-			fmt.Println("Failed to read packet:", er, nr, isc2s)
+			// fmt.Println("Failed to read packet:", er, nr, isc2s)
 			// return
 		} else {
-			fmt.Println("Read packet:", nr, isc2s)
-			sequenceNumber := strings.TrimRight(string(buf), "\x00")
-
-			fmt.Printf("s2c packet from : %s\n", sequenceNumber)
+			// fmt.Println("Read packet:", nr, isc2s)
 		}
 
 		if !isc2s {
@@ -750,13 +747,17 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 			}
 		}
 
+		// sequenceNumber := strings.TrimRight(string(buf), "\x00")
+
+		// fmt.Printf("s2c packet from : %s\n", sequenceNumber)
+
 		var data []byte
 		if isc2s && nr > 0 && string(buf[0:nr]) != constants.BlockEndMarker {
 			// 获取远程地址的端口号
 			udpAddr, ok := t.Conn.RemoteAddr().(*net.UDPAddr)
 			if !ok {
-				// fmt.Println("unknown address type")
-				// return
+				fmt.Println("unknown address type")
+				return
 			}
 			port := uint32(udpAddr.Port)
 			// fmt.Println("read packet port:", port)
@@ -766,7 +767,7 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 		data = append(data, buf[:nr]...) // 拼接数据
 		nr = len(data)
 		if nr > 0 {
-			fmt.Println("Write", nr, "bytes")
+			// fmt.Println("Write", nr, "bytes")
 			nw, ew := dst.Write(data)
 			if nw < 0 || nr < nw {
 				nw = 0
@@ -791,7 +792,7 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 			break
 		}
 	}
-	fmt.Println("copy_datagram end")
+	// fmt.Println("copy_datagram end")
 	return err
 }
 
