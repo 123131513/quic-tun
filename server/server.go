@@ -80,6 +80,7 @@ func (s *ServerEndpoint) Start() {
 					// After handshake successful the server application's address is established we can add it to log
 					ctx = logger.WithValues(constants.ServerAppAddr, (*tun.Conn).RemoteAddr().String()).WithContext(ctx)
 					go tun.Establish_Datagram(ctx)
+					// go tun.Establish(ctx)
 				}
 			}()
 		}

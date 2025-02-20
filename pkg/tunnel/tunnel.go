@@ -21,8 +21,8 @@ import (
 )
 
 var (
-	BlockSizes      map[string][]int         // 全局数组，用于记录每个数据块的大小
-	BlockSizesMutex map[string]*sync.RWMutex // 读写互斥锁，用于保护 BlockSizes
+	BlockSizes      map[string][]int // 全局数组，用于记录每个数据块的大小
+	BlockSizesMutex sync.RWMutex     // 读写互斥锁，用于保护 BlockSizes
 )
 
 // zzh: add deadline for packet
@@ -308,10 +308,10 @@ type DatagramStream struct {
 func (s *DatagramStream) Write(p []byte) (int, error) {
 	// fmt.Println("datagram write")
 	// fmt.Println(s.ClientAppAddr)
-	BlockSizesMutex[s.ClientAppAddr].RLock()
+	BlockSizesMutex.RLock()
 	copyBlockSizes := make([]int, len(BlockSizes[s.ClientAppAddr]))
 	copy(copyBlockSizes, BlockSizes[s.ClientAppAddr])
-	BlockSizesMutex[s.ClientAppAddr].RUnlock()
+	BlockSizesMutex.RUnlock()
 
 	// fmt.Println("Write packet")
 	err := s.handler.SendMessage(s.ClientAppAddr, p, copyBlockSizes)

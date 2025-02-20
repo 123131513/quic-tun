@@ -30,6 +30,7 @@ var (
 	conns              = make(map[string]*(tunnel.UDPConn)) // 声明并初始化conns映射
 	mu                 = &sync.Mutex{}                      // 声明并初始化互斥锁
 	resetScheduledFlag atomic.Bool                          // 新增原子标记
+	timemu             = &sync.Mutex{}                      // 声明并初始化互斥锁
 )
 
 type ClientEndpoint struct {
@@ -46,8 +47,8 @@ func (c *ClientEndpoint) Start() {
 	}
 	os.Setenv("PROJECT_HOME_DIR", dir)
 
-	tunnel.BlockSizes = make(map[string][]int)              // 声明并初始化BlockSizes映射
-	tunnel.BlockSizesMutex = make(map[string]*sync.RWMutex) // 声明并初始化互斥锁
+	tunnel.BlockSizes = make(map[string][]int) // 声明并初始化BlockSizes映射
+	// tunnel.BlockSizesMutex = sync.RWMutex // 声明并初始化互斥锁
 	// Dial server endpoint
 	cfgServer := &quic.Config{
 		KeepAlive:   true,
@@ -163,8 +164,10 @@ func (c *ClientEndpoint) Start() {
 		// sequenceNumber := strings.TrimRight(string(buffer), "\x00")
 		// 定义一个函数来处理计时器超时
 		handleTimeout := func() {
+			timemu.Lock()
 			if state[addr.String()] == State2 {
 				state[addr.String()] = State1
+				timemu.Unlock()
 				// fmt.Println("get conn lock before in handleTimeout")
 				mu.Lock()
 				defer mu.Unlock()
@@ -179,7 +182,7 @@ func (c *ClientEndpoint) Start() {
 				}
 				// 记录当前数据块的大小
 				// fmt.Println("tunnel.BlockSizesMutex[addr.String()].Lock()")
-				tunnel.BlockSizesMutex[addr.String()].Lock()
+				tunnel.BlockSizesMutex.Lock()
 				// fmt.Println("tunnel.BlockSizesMutex[addr.String()].Lock() done")
 				// fmt.Printf("blockNumber: %d and len %d\n", blockNumber[addr.String()], len(tunnel.BlockSizes[addr.String()]))
 				tunnel.BlockSizes[addr.String()] = append(tunnel.BlockSizes[addr.String()], 0)
@@ -187,15 +190,18 @@ func (c *ClientEndpoint) Start() {
 				// tunnel.BlockSizes[blockNumber-2] = BlockSize
 				tunnel.BlockSizes[addr.String()][blockNumber[addr.String()]-1] = currentBlockSize[addr.String()]
 				// fmt.Println("set block size")
-				tunnel.BlockSizesMutex[addr.String()].Unlock()
+				tunnel.BlockSizesMutex.Unlock()
 				// fmt.Println("unlock")
 				// 重置当前数据块大小
 				currentBlockSize[addr.String()] = 0
 				// fmt.Println("reset currentBlockSize")
+			} else {
+				timemu.Unlock()
 			}
 		}
 
 		// fmt.Println("timer before")
+		timemu.Lock()
 		_, flag_time := firstPacketTime[addr.String()]
 		// fmt.Println("timer after")
 		if !flag_time {
@@ -212,6 +218,7 @@ func (c *ClientEndpoint) Start() {
 			currentTime[addr.String()] = time.Now()
 			arrivalTime[addr.String()] = int(currentTime[addr.String()].Sub(firstPacketTime[addr.String()]).Milliseconds())
 		}
+		timemu.Unlock()
 		// 获取当前时间
 		// currentTime := time.Now()
 		// if !firstPacketReceived {
@@ -220,8 +227,12 @@ func (c *ClientEndpoint) Start() {
 		// }
 		// arrivalTime := currentTime.Sub(firstPacketTime).Milliseconds()
 		// logEntry := fmt.Sprintf("Packet received at: %d ms\n", arrivalTime)
+		mu.Lock()
+		blockNumber_time := blockNumber[addr.String()]
+		mu.Unlock()
 
 		// 状态机逻辑
+		timemu.Lock()
 		switch state[addr.String()] {
 		case State1:
 			// if currentTime == firstPacketTime || currentTime.Sub(lastPacketTime).Milliseconds() < 1 {
@@ -273,18 +284,20 @@ func (c *ClientEndpoint) Start() {
 
 		// 记录数据包
 		// logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d) %s\n", arrivalTime[addr.String()], blockNumber[addr.String()], state[addr.String()], sequenceNumber)
-		logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d) %s\n", arrivalTime[addr.String()], blockNumber[addr.String()], state[addr.String()], addr.String())
+		logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d) %s\n", arrivalTime[addr.String()], blockNumber_time, state[addr.String()], addr.String())
 		if _, err := logFile.WriteString(logEntry); err != nil {
 			panic(err)
 		}
-
+		timemu.Unlock()
 		// 更新当前块的大小
 		packetSize := n // 假设 packetData 是当前数据包的数据
+		mu.Lock()
 		_, ok := currentBlockSize[addr.String()]
 		if !ok {
 			currentBlockSize[addr.String()] = 0
 		}
 		currentBlockSize[addr.String()] += packetSize
+		mu.Unlock()
 
 		msgs, err := unix.ParseSocketControlMessage(oob[:oobn])
 		if err != nil {
@@ -343,12 +356,13 @@ func (c *ClientEndpoint) Start() {
 
 				// fmt.Println(udpconn.LocalAddr().String())
 				// fmt.Println(udpconn.RemoteAddr().String())
-
+				fmt.Println("get BlockSizes before in main")
 				udpconn.Close()
 				conn = tunnel.NewUDPConn(listener, addr, dstAddr, false, conns, udpConn)
 				conns[addr.String()] = conn
 				tunnel.BlockSizes[addr.String()] = make([]int, 0)
-				tunnel.BlockSizesMutex[addr.String()] = &sync.RWMutex{}
+				fmt.Println("get BlockSizes after in main")
+				// tunnel.BlockSizesMutex[addr.String()] = &sync.RWMutex{}
 				blockNumber[addr.String()] = 0
 				fmt.Println("New connection from", addr.String())
 				session.InitConnection(addr.String())
@@ -394,6 +408,7 @@ func (c *ClientEndpoint) Start() {
 						return
 					}
 					tun.Establish_Datagram(ctx)
+					// tun.Establish(ctx)
 					//}
 				}()
 			} else {
