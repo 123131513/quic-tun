@@ -635,6 +635,14 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 			// 	// return nil
 			// }
 			nr, er = src.Read(buf)
+			// fmt.Println("BLOCK_END", len(buf), (string(buf[0:nr]) == "BLOCK_END"))
+			if string(buf[0:nr]) == "BLOCK_END" {
+				// fmt.Println("BLOCK_END")
+				for i := range buf { // 清零
+					buf[i] = 0
+				}
+				nr = 0
+			}
 		} else {
 			err := binary.Read(src, binary.BigEndian, &packetLength)
 			if err != nil {
