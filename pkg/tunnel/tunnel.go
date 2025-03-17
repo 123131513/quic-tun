@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"strconv"
+
+	// "strings"
 	"sync"
 	"time"
 
@@ -23,6 +25,11 @@ import (
 var (
 	BlockSizes      map[string][]int // 全局数组，用于记录每个数据块的大小
 	BlockSizesMutex sync.RWMutex     // 读写互斥锁，用于保护 BlockSizes
+)
+
+var (
+	// writeMu sync.RWMutex     // 读写互斥锁，用于保护 write 操作和 read 操作
+	copyMu sync.RWMutex // 读写互斥锁，用于保护 copy 操作
 )
 
 // zzh: add deadline for packet
@@ -127,6 +134,9 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 		if err != nil {
 			panic(err)
 		}
+		// sequenceNumber := strings.TrimRight(string(b), "\x00")
+
+		// fmt.Printf("s2c packet from : %s and addr %s\n", sequenceNumber, c.dest.String())
 		n, err = udpconn.Write(b) //, c.remote.(*net.UDPAddr))
 
 		udpconn.Close()
@@ -329,6 +339,8 @@ func (s *DatagramStream) Write(p []byte) (int, error) {
 // Read receives data from a datagram.
 func (s *DatagramStream) Read(p []byte) (int, error) {
 	// fmt.Println("datagram read")
+	// writeMu.RLock()
+	// defer writeMu.RUnlock()
 	receivedData, err := s.handler.ReceiveMessage()
 	if err != nil {
 		return 0, err
@@ -451,6 +463,31 @@ func (t *tunnel) Establish_Datagram(ctx context.Context) {
 	DataStore.Store(t.Uuid, *t)
 	go t.conn2Datagram(logger, &wg, conn2Datagram)
 	go t.Datagram2Conn(logger, &wg, Datagram2conn)
+	logger.Info("Tunnel established successful")
+	// If the tunnel already prepare to close but the analyze
+	// process still is running, we need to cancle it by concle context.
+	ctx, cancle := context.WithCancel(ctx)
+	defer cancle()
+	go t.countTraffic(ctx, Datagram2conn, conn2Datagram)
+	go t.analyze(ctx)
+	wg.Wait()
+	DataStore.Delete(t.Uuid)
+	logger.Info("Tunnel closed")
+}
+
+// zzh: new establish function
+func (t *tunnel) Establish_keepAlive(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var (
+		Datagram2conn = make(chan int, 32768)
+		conn2Datagram = make(chan int, 32768)
+	)
+	t.fillProperties(ctx)
+	DataStore.Store(t.Uuid, *t)
+	go t.keepAliveProcess(logger, &wg, conn2Datagram)
+	go t.keepAliveProcess(logger, &wg, Datagram2conn)
 	logger.Info("Tunnel established successful")
 	// If the tunnel already prepare to close but the analyze
 	// process still is running, we need to cancle it by concle context.
@@ -586,6 +623,17 @@ func (t *tunnel) conn2Datagram(logger log.Logger, wg *sync.WaitGroup, forwardNum
 	}
 	if err != nil {
 		logger.Errorw("Can not forward packet from TCP/UNIX socket to QUIC stream", "error", err.Error())
+	}
+}
+
+func (t *tunnel) keepAliveProcess(logger log.Logger, wg *sync.WaitGroup, forwardNumChan chan<- int) {
+	defer func() {
+		(*t.Stream).Close()
+		(*t.Conn).Close()
+		wg.Done()
+	}()
+	for {
+		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -732,6 +780,9 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 		var nr int
 		// 读取数据
 		// fmt.Println("Read packet")
+		// if !isc2s {
+		// 	copyMu.Lock()
+		// }
 		nr, er = src.Read(buf)
 		if er != nil {
 			// fmt.Println("Failed to read packet:", er, nr, isc2s)
@@ -749,6 +800,9 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 				// 剩余的数据部分
 				buf = buf[4:nr]
 				nr = len(buf)
+				// sequenceNumber := strings.TrimRight(string(buf), "\x00")
+
+				// fmt.Printf("s2c packet from : %s and port %d \n", sequenceNumber, int(packetaddr))
 			} else {
 				fmt.Println("Packet length is less than 4 bytes")
 				// return
@@ -774,9 +828,15 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 		}
 		data = append(data, buf[:nr]...) // 拼接数据
 		nr = len(data)
+		// if !isc2s && nr < 0 {
+		// 	copyMu.Unlock()
+		// }
 		if nr > 0 {
 			// fmt.Println("Write", nr, "bytes")
 			nw, ew := dst.Write(data)
+			// if !isc2s {
+			// 	copyMu.Unlock()
+			// }
 			if nw < 0 || nr < nw {
 				nw = 0
 				if ew == nil {

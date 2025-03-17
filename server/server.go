@@ -18,8 +18,9 @@ import (
 )
 
 var (
-	conns = make(map[string]*(tunnel.UDPConn)) // 声明并初始化conns映射
-	mu    = &sync.Mutex{}                      // 声明并初始化互斥锁
+	conns           = make(map[string]*(tunnel.UDPConn)) // 声明并初始化conns映射
+	mu              = &sync.Mutex{}                      // 声明并初始化互斥锁
+	establishedOnce bool
 )
 
 type ServerEndpoint struct {
@@ -33,6 +34,7 @@ func (s *ServerEndpoint) Start() {
 	if err != nil {
 		panic(err)
 	}
+	establishedOnce = true
 	os.Setenv("PROJECT_HOME_DIR", dir)
 	// Listen a quic(UDP) socket.
 	cfgServer := &quic.Config{
@@ -79,7 +81,12 @@ func (s *ServerEndpoint) Start() {
 					}
 					// After handshake successful the server application's address is established we can add it to log
 					ctx = logger.WithValues(constants.ServerAppAddr, (*tun.Conn).RemoteAddr().String()).WithContext(ctx)
-					go tun.Establish_Datagram(ctx)
+					if establishedOnce {
+						establishedOnce = false
+						go tun.Establish_Datagram(ctx)
+					} else {
+						go tun.Establish_keepAlive(ctx)
+					}
 					// go tun.Establish(ctx)
 				}
 			}()
