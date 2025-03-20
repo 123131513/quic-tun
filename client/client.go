@@ -163,6 +163,28 @@ func (c *ClientEndpoint) Start() {
 
 		n, oobn, _, addr, err := udpConn.ReadMsgUDP(buffer, oob)
 		// sequenceNumber := strings.TrimRight(string(buffer), "\x00")
+		// 增强型SRTP解析逻辑
+		var (
+			markerBit uint8
+			isRTP     bool
+		)
+
+		isRTP = false
+		if n >= 12 { // RTP头最小长度检查
+			// 验证RTP版本（必须为版本2）
+			version := (buffer[0] & 0xC0) >> 6
+			if version == 2 { // RTP规范版本号
+				isRTP = true
+
+				// 提取Marker位（第二个字节的最高位）
+				markerBit = (buffer[1] & 0x80) >> 7
+
+			}
+		}
+
+		if !isRTP {
+			markerBit = 0 // 非RTP包默认值
+		}
 		// 定义一个函数来处理计时器超时
 		handleTimeout := func() {
 			timemu.Lock()
@@ -173,16 +195,9 @@ func (c *ClientEndpoint) Start() {
 				mu.Lock()
 				defer mu.Unlock()
 				// fmt.Println("get conn lock after in handleTimeout")
-				conns[addr.String()].Queue <- []byte(BlockEndMarker)
-				blockNumber[addr.String()]++
-				logEntry := fmt.Sprintf("Timeout: Forced transition to State1 (Block %d) currentBlockSize %d\n", blockNumber[addr.String()], currentBlockSize[addr.String()])
-				// BlockSize := currentBlockSize
-				// currentBlockSize = 0
-				if _, err := logFile.WriteString(logEntry); err != nil {
-					panic(err)
-				}
 				// 记录当前数据块的大小
 				// fmt.Println("tunnel.BlockSizesMutex[addr.String()].Lock()")
+				blockNumber[addr.String()]++
 				tunnel.BlockSizesMutex.Lock()
 				// fmt.Println("tunnel.BlockSizesMutex[addr.String()].Lock() done")
 				// fmt.Printf("blockNumber: %d and len %d\n", blockNumber[addr.String()], len(tunnel.BlockSizes[addr.String()]))
@@ -192,6 +207,14 @@ func (c *ClientEndpoint) Start() {
 				tunnel.BlockSizes[addr.String()][blockNumber[addr.String()]-1] = currentBlockSize[addr.String()]
 				// fmt.Println("set block size")
 				tunnel.BlockSizesMutex.Unlock()
+
+				conns[addr.String()].Queue <- []byte(BlockEndMarker)
+				logEntry := fmt.Sprintf("Timeout: %s Forced transition to State1 (Block %d) currentBlockSize %d isRTP %t MarkBit %d\n", addr.String(), blockNumber[addr.String()], currentBlockSize[addr.String()], isRTP, markerBit)
+				// BlockSize := currentBlockSize
+				// currentBlockSize = 0
+				if _, err := logFile.WriteString(logEntry); err != nil {
+					panic(err)
+				}
 				// fmt.Println("unlock")
 				// 重置当前数据块大小
 				currentBlockSize[addr.String()] = 0
@@ -285,7 +308,7 @@ func (c *ClientEndpoint) Start() {
 
 		// 记录数据包
 		// logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d) %s\n", arrivalTime[addr.String()], blockNumber[addr.String()], state[addr.String()], sequenceNumber)
-		logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d) %s\n", arrivalTime[addr.String()], blockNumber_time, state[addr.String()], addr.String())
+		logEntry := fmt.Sprintf("Packet received at: %d ms (Block %d, State %d) %s isRTP %t MarkBit %d\n", arrivalTime[addr.String()], blockNumber_time, state[addr.String()], addr.String(), isRTP, markerBit)
 		if _, err := logFile.WriteString(logEntry); err != nil {
 			panic(err)
 		}
@@ -297,7 +320,7 @@ func (c *ClientEndpoint) Start() {
 		if !ok {
 			currentBlockSize[addr.String()] = 0
 		}
-		currentBlockSize[addr.String()] += packetSize
+		currentBlockSize[addr.String()] += packetSize + 6 // 6 是 QUIC帧 头部大小
 		mu.Unlock()
 
 		msgs, err := unix.ParseSocketControlMessage(oob[:oobn])

@@ -33,7 +33,7 @@ var (
 )
 
 // zzh: add deadline for packet
-const deadline = 300 * time.Millisecond
+const deadline = 600 * time.Millisecond
 
 type UDPConn struct {
 	pc       net.PacketConn
@@ -312,12 +312,23 @@ type DatagramStream struct {
 	handler       quic.Session
 	readBuf       []byte
 	ClientAppAddr string // zzh: add ClientAppAddr
+	Session       *quic.Session
 }
 
 // Write sends data as a datagram.
 func (s *DatagramStream) Write(p []byte) (int, error) {
 	// fmt.Println("datagram write")
 	// fmt.Println(s.ClientAppAddr)
+	arrivetime := (*s.Session).Getdeadlinestatus()
+	//fmt.Println("zzh: arriveTime: ", arrivetime)
+	if arrivetime >= time.Duration(deadline) && string(p) != constants.BlockEndMarker {
+		// fmt.Println(arrivetime, arrivetime)
+		// fmt.Println("deadline is exceeded")
+		return len(p), nil
+	}
+	if string(p) == constants.BlockEndMarker {
+		// fmt.Println("BlockEndMarker")
+	}
 	BlockSizesMutex.RLock()
 	copyBlockSizes := make([]int, len(BlockSizes[s.ClientAppAddr]))
 	copy(copyBlockSizes, BlockSizes[s.ClientAppAddr])
@@ -774,6 +785,7 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 	// }
 	for {
 		buf := make([]byte, size)
+		// qbu := make([]byte, size)
 		// 读取数据包的头部信息，获取数据包的长度
 		var packetaddr uint32
 		var er error
@@ -783,13 +795,41 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 		// if !isc2s {
 		// 	copyMu.Lock()
 		// }
-		nr, er = src.Read(buf)
-		if er != nil {
-			// fmt.Println("Failed to read packet:", er, nr, isc2s)
-			// return
+		if isc2s {
+			// arrivetime := (*t.Session).Getdeadlinestatus()
+			// //fmt.Println("zzh: arriveTime: ", arrivetime)
+			// for arrivetime >= time.Duration(deadline) {
+			// 	fmt.Println(arrivetime, arrivetime)
+			// 	fmt.Println("deadline is exceeded")
+			// 	nr, er = src.Read(qbu)
+			// 	qbu = qbu[:0]
+			// 	nr = 0
+			// 	arrivetime = (*t.Session).Getdeadlinestatus()
+			// }
+
+			nr, er = src.Read(buf)
+			if er != nil {
+				// fmt.Println("Failed to read packet:", er, nr, isc2s)
+				// return
+			} else {
+				// fmt.Println("Read packet:", nr, isc2s)
+			}
 		} else {
-			// fmt.Println("Read packet:", nr, isc2s)
+			nr, er = src.Read(buf)
+			if er != nil {
+				// fmt.Println("Failed to read packet:", er, nr, isc2s)
+				// return
+			} else {
+				// fmt.Println("Read packet:", nr, isc2s)
+			}
 		}
+		// nr, er = src.Read(buf)
+		// if er != nil {
+		// 	// fmt.Println("Failed to read packet:", er, nr, isc2s)
+		// 	// return
+		// } else {
+		// 	// fmt.Println("Read packet:", nr, isc2s)
+		// }
 
 		if !isc2s {
 			// 读取前4个字节作为端口号
@@ -940,7 +980,9 @@ func NewTunnel(session *quic.Session, stream *quic.Stream, endpoint string) tunn
 		// zzh: add DatagramStream
 		DatagramStream: &DatagramStream{
 			handler: *session,
-			readBuf: make([]byte, 1500)},
+			readBuf: make([]byte, 1500),
+			Session: session,
+		},
 	}
 }
 
