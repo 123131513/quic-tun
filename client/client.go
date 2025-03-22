@@ -135,8 +135,8 @@ func (c *ClientEndpoint) Start() {
 		BlockEndMarker = constants.BlockEndMarker
 	)
 	// 定义计时器超时时间
-	const timeoutDuration = 6 * time.Millisecond
-	const timeout_int = 6 // ms
+	const timeoutDuration = 2500 * time.Microsecond
+	const timeoutIntMicro = 2500 // 整数表示的微秒值
 	timer := make(map[string]*time.Timer)
 
 	// state := State2
@@ -282,7 +282,7 @@ func (c *ClientEndpoint) Start() {
 			// }
 
 		case State2:
-			if currentTime[addr.String()].Sub(lastPacketTime[addr.String()]).Milliseconds() < timeout_int {
+			if currentTime[addr.String()].Sub(lastPacketTime[addr.String()]) < timeoutDuration {
 			}
 			// 保持在状态2
 			lastPacketTime[addr.String()] = currentTime[addr.String()]
