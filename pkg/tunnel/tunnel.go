@@ -28,6 +28,11 @@ var (
 )
 
 var (
+	Udpcon_dic  map[int]*UDPConn // 全局数组，用于记录每个数据块的大小
+	UdpconMutex sync.RWMutex     // 读写互斥锁，用于保护 BlockSizes
+)
+
+var (
 	// writeMu sync.RWMutex     // 读写互斥锁，用于保护 write 操作和 read 操作
 	copyMu sync.RWMutex // 读写互斥锁，用于保护 copy 操作
 )
@@ -84,7 +89,7 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 		//fmt.Println(n)
 	} else {
 		n, _, err := c.pc.ReadFrom(b)
-		// fmt.Println("UDP read from pc")
+		fmt.Println("UDP read from pc")
 		if err != nil {
 			return 0, err
 		}
@@ -118,33 +123,40 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 		newAddr = udpAddr
 	}
 
+	udpAddr = newAddr
 	// fmt.Println("newAddr and dest", newAddr.String(), c.dest.String())
 
 	if c.isServer {
 		// udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
-		udpconn, err := dialUDP("udp", newAddr, c.remote.(*net.UDPAddr))
-		// udpconn, err := dialUDP("udp", &net.UDPAddr{
-		// 	IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
-		// 	Port: 5201,                    // Replace with your source port
-		// }, c.remote.(*net.UDPAddr))
-		// Create a new UDP co //&net.UDPAddr{
-		//IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
-		//Port: 6666,                    // Replace with your source port
-		//}, addr.(*net.UDPAddr))
-		if err != nil {
-			panic(err)
+		// udpconn, err := dialUDP("udp", newAddr, c.remote.(*net.UDPAddr))
+		// // udpconn, err := dialUDP("udp", &net.UDPAddr{
+		// // 	IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
+		// // 	Port: 5201,                    // Replace with your source port
+		// // }, c.remote.(*net.UDPAddr))
+		// // Create a new UDP co //&net.UDPAddr{
+		// //IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
+		// //Port: 6666,                    // Replace with your source port
+		// //}, addr.(*net.UDPAddr))
+		// if err != nil {
+		// 	panic(err)
+		// }
+		// // sequenceNumber := strings.TrimRight(string(b), "\x00")
+
+		// // fmt.Printf("s2c packet from : %s and addr %s\n", sequenceNumber, c.dest.String())
+		// n, err = udpconn.Write(b) //, c.remote.(*net.UDPAddr))
+
+		// udpconn.Close()
+		// return n, err
+		udpConn, _ := c.pc.(*net.UDPConn)
+		if c.port != 0 {
+			UdpconMutex.RLock()
+			udpConn, _ = Udpcon_dic[c.port].pc.(*net.UDPConn)
+			UdpconMutex.RUnlock()
 		}
-		// sequenceNumber := strings.TrimRight(string(b), "\x00")
-
-		// fmt.Printf("s2c packet from : %s and addr %s\n", sequenceNumber, c.dest.String())
-		n, err = udpconn.Write(b) //, c.remote.(*net.UDPAddr))
-
-		udpconn.Close()
-		return n, err
-		// return udpConn.Write(b)
+		return udpConn.Write(b)
 	} else {
-		// udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
-		udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), newAddr)
+		udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), c.remote.(*net.UDPAddr))
+		// udpconn, err := dialUDP("udp", c.dest.(*net.UDPAddr), newAddr)
 		// udpconn, err := dialUDP("udp", &net.UDPAddr{
 		// 	IP:   net.ParseIP("10.0.7.2"), // Replace with your source IP
 		// 	Port: 5201,                    // Replace with your source port
@@ -158,8 +170,8 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 		}
 		//defer udpconn.Close()
 
-		// fmt.Println(udpconn.LocalAddr().String())
-		// fmt.Println(udpconn.RemoteAddr().String())
+		fmt.Println(c.dest.(*net.UDPAddr))
+		fmt.Println(c.remote.(*net.UDPAddr))
 
 		// 提取序号（去掉填充部分）
 		// sequenceNumber := strings.TrimRight(string(b), "\x00")
@@ -447,8 +459,11 @@ func (t *tunnel) Establish(ctx context.Context) {
 	)
 	t.fillProperties(ctx)
 	DataStore.Store(t.Uuid, *t)
-	go t.conn2Stream(logger, &wg, conn2stream)
-	go t.stream2Conn(logger, &wg, steam2conn)
+	if t.Conn.isServer {
+		go t.conn2Stream(logger, &wg, conn2stream)
+	} else {
+		go t.stream2Conn(logger, &wg, steam2conn)
+	}
 	logger.Info("Tunnel established successful")
 	// If the tunnel already prepare to close but the analyze
 	// process still is running, we need to cancle it by concle context.
@@ -472,8 +487,14 @@ func (t *tunnel) Establish_Datagram(ctx context.Context) {
 	)
 	t.fillProperties(ctx)
 	DataStore.Store(t.Uuid, *t)
-	go t.conn2Datagram(logger, &wg, conn2Datagram)
-	go t.Datagram2Conn(logger, &wg, Datagram2conn)
+	if t.Conn.isServer {
+		go t.Datagram2Conn(logger, &wg, Datagram2conn)
+	} else {
+		go t.conn2Datagram(logger, &wg, conn2Datagram)
+	}
+
+	// go t.conn2Datagram(logger, &wg, conn2Datagram)
+	// go t.Datagram2Conn(logger, &wg, Datagram2conn)
 	logger.Info("Tunnel established successful")
 	// If the tunnel already prepare to close but the analyze
 	// process still is running, we need to cancle it by concle context.
@@ -694,7 +715,7 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 			// 	// return nil
 			// }
 			nr, er = src.Read(buf)
-			// fmt.Println("BLOCK_END", len(buf), (string(buf[0:nr]) == "BLOCK_END"))
+			fmt.Println("BLOCK_END", len(buf), (string(buf[0:nr]) == "BLOCK_END"))
 			if string(buf[0:nr]) == "BLOCK_END" {
 				// fmt.Println("BLOCK_END")
 				for i := range buf { // 清零
@@ -733,7 +754,7 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 			}
 		}
 		if nr > 0 {
-			//fmt.Println("Write", nr, "bytes")
+			fmt.Println("Write", nr, "bytes")
 			nw, ew := dst.Write(buf[0:nr])
 			if nw < 0 || nr < nw {
 				nw = 0

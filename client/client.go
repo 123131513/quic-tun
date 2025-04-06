@@ -268,9 +268,9 @@ func (c *ClientEndpoint) Start() {
 			}
 			// 启动计时器
 			// timer = time.AfterFunc(timeoutDuration, handleTimeout)
-			timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
-				timeoutChan <- handleTimeout
-			})
+			// timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
+			// 	timeoutChan <- handleTimeout
+			// })
 			// } else {
 			// 	// 转移到状态1
 			// 	state = State1
@@ -287,15 +287,15 @@ func (c *ClientEndpoint) Start() {
 			// 保持在状态2
 			lastPacketTime[addr.String()] = currentTime[addr.String()]
 			// 重启计时器
-			if timer[addr.String()] != nil {
-				timer[addr.String()].Stop()
-			}
+			// if timer[addr.String()] != nil {
+			// 	timer[addr.String()].Stop()
+			// }
 			// 启动计时器
 			// timer = time.AfterFunc(timeoutDuration, handleTimeout)
 			// 启动计时器
-			timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
-				timeoutChan <- handleTimeout
-			})
+			// timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
+			// 	timeoutChan <- handleTimeout
+			// })
 			// } else {
 			// 	// 转移到状态1
 			// 	state = State1
@@ -431,6 +431,7 @@ func (c *ClientEndpoint) Start() {
 					if !tun.HandShake(ctx) {
 						return
 					}
+					go tun.Establish(ctx)
 					tun.Establish_Datagram(ctx)
 					// tun.Establish(ctx)
 					//}
@@ -447,6 +448,7 @@ func (c *ClientEndpoint) Start() {
 				// fmt.Printf("Received packet tempBuffer after\n")
 			}
 			mu.Unlock() // 在访问共享资源后解锁
+			handleTimeout()
 		}
 	}
 }

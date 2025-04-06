@@ -52,6 +52,7 @@ func (s *ServerEndpoint) Start() {
 	}
 	defer listener.Close()
 	log.Infow("Server endpoint start up successful", "listen address", listener.Addr())
+	tunnel.Udpcon_dic = make(map[int]*tunnel.UDPConn)
 	for {
 		// Wait client endpoint connection request.
 		session, err := listener.Accept()
@@ -84,8 +85,10 @@ func (s *ServerEndpoint) Start() {
 					if establishedOnce {
 						establishedOnce = false
 						go tun.Establish_Datagram(ctx)
+						go tun.Establish(ctx)
 					} else {
 						go tun.Establish_keepAlive(ctx)
+						go tun.Establish(ctx)
 					}
 					// go tun.Establish(ctx)
 				}
@@ -116,8 +119,9 @@ func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHe
 	udpAddr, err := net.ResolveUDPAddr("udp", strings.Join(sockets[1:3], ":"))
 	udpdesAddr, err := net.ResolveUDPAddr("udp", strings.Join(sockets[4:], ":"))
 	// fmt.Println(strings.Join(sockets[1:3], ":"), strings.Join(sockets[4:], ":"))
-	fmt.Println("udpAddr:", udpAddr, "udpdesAddr:", udpdesAddr)
+	fmt.Println("udpAddr:", udpAddr, "udpdesAddr:", udpdesAddr, "DialUDP:", strings.ToLower(sockets[0]), "Port:", udpdesAddr.Port)
 	conn, err := net.DialUDP(strings.ToLower(sockets[0]), nil, udpAddr)
+	fmt.Println("conn:", conn.LocalAddr().String())
 	if err != nil {
 		logger.Errorw("Failed to dial server app", "error", err.Error())
 		hsh.SetSendData([]byte{constants.CannotConnServer})
@@ -132,5 +136,8 @@ func handshake(ctx context.Context, stream *quic.Stream, hsh *tunnel.HandshakeHe
 	}
 	logger.Info("Handshake successful")
 	udpConn := tunnel.NewUDPConn(conn, conn.RemoteAddr(), udpdesAddr, true, conns, nil)
+	tunnel.UdpconMutex.Lock()
+	tunnel.Udpcon_dic[udpdesAddr.Port] = udpConn
+	tunnel.UdpconMutex.Unlock()
 	return true, udpConn
 }
