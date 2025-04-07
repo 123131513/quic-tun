@@ -16,11 +16,12 @@ ip route add local 0.0.0.0/0 dev lo table 100
 # ip route add default via 10.0.3.2 dev r1-eth3 table 3
 
 iptables -t mangle -F
+iptables -t nat -F
 iptables -t mangle -X GOST
 iptables -t mangle -X GOST_LOCAL
 
-sudo iptables -t nat -A POSTROUTING -o wlp2s0 -j MASQUERADE
-sudo iptables -t nat -A POSTROUTING -o enx344b50000000 -j MASQUERADE
+# sudo iptables -t nat -A POSTROUTING -o wlp2s0 -j MASQUERADE
+# sudo iptables -t nat -A POSTROUTING -o enx344b50000000 -j MASQUERADE
 
 iptables -t mangle -N GOST
 
