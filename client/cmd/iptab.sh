@@ -42,7 +42,7 @@ iptables -t mangle -A GOST -p udp -d 169.254.0.0/16 -j RETURN
 # iptables -t mangle -A GOST -p udp -d 10.0.4.2/32 -j RETURN
 iptables -t mangle -A GOST -p udp -m mark --mark 100 -j RETURN 
 iptables -t mangle -A GOST -p udp -m mark --mark 0x1 -j RETURN 
-iptables -t mangle -A GOST -p udp -s 10.0.0.1 -j TPROXY --tproxy-mark 0x1/0x1 --on-ip 127.0.0.1 --on-port 12345
+iptables -t mangle -A GOST -p udp -j TPROXY --tproxy-mark 0x1/0x1 --on-ip 127.0.0.1 --on-port 12345
 iptables -t mangle -A PREROUTING -p udp -j GOST
 
 iptables -t mangle -N GOST_LOCAL
