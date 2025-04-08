@@ -89,7 +89,7 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 		//fmt.Println(n)
 	} else {
 		n, _, err := c.pc.ReadFrom(b)
-		fmt.Println("UDP read from pc")
+		// fmt.Println("UDP read from pc")
 		if err != nil {
 			return 0, err
 		}
@@ -715,7 +715,7 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 			// 	// return nil
 			// }
 			nr, er = src.Read(buf)
-			fmt.Println("BLOCK_END", len(buf), (string(buf[0:nr]) == "BLOCK_END"))
+			// fmt.Println("BLOCK_END", len(buf), (string(buf[0:nr]) == "BLOCK_END"))
 			if string(buf[0:nr]) == "BLOCK_END" {
 				// fmt.Println("BLOCK_END")
 				for i := range buf { // 清零
@@ -729,9 +729,9 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 				//fmt.Println("Failed to read packet length:", err)
 				break
 			}
-			fmt.Println("read packet length:", packetLength)
+			// fmt.Println("read packet length:", packetLength)
 			packetData := make([]byte, packetLength)
-			fmt.Println("read packet data")
+			// fmt.Println("read packet data")
 			nr, er = io.ReadFull(src, packetData)
 			if er != nil {
 				//fmt.Println("Failed to read packet data:", er)
@@ -754,7 +754,7 @@ func (t *tunnel) copy(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s boo
 			}
 		}
 		if nr > 0 {
-			fmt.Println("Write", nr, "bytes")
+			// fmt.Println("Write", nr, "bytes")
 			nw, ew := dst.Write(buf[0:nr])
 			if nw < 0 || nr < nw {
 				nw = 0

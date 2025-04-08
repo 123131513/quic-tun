@@ -380,7 +380,7 @@ func (c *ClientEndpoint) Start() {
 
 				// fmt.Println(udpconn.LocalAddr().String())
 				// fmt.Println(udpconn.RemoteAddr().String())
-				fmt.Println("get BlockSizes before in main")
+				// fmt.Println("get BlockSizes before in main")
 				udpconn.Close()
 				conn = tunnel.NewUDPConn(listener, addr, dstAddr, false, conns, udpConn)
 				conns[addr.String()] = conn
