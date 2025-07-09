@@ -170,8 +170,8 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 		}
 		//defer udpconn.Close()
 
-		fmt.Println(c.dest.(*net.UDPAddr))
-		fmt.Println(c.remote.(*net.UDPAddr))
+		// fmt.Println(c.dest.(*net.UDPAddr))
+		// fmt.Println(c.remote.(*net.UDPAddr))
 
 		// 提取序号（去掉填充部分）
 		// sequenceNumber := strings.TrimRight(string(b), "\x00")

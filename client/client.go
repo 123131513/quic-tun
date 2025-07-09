@@ -135,8 +135,8 @@ func (c *ClientEndpoint) Start() {
 		BlockEndMarker = constants.BlockEndMarker
 	)
 	// 定义计时器超时时间
-	const timeoutDuration = 2500 * time.Microsecond
-	const timeoutIntMicro = 2500 // 整数表示的微秒值
+	const timeoutDuration = 6000 * time.Microsecond
+	const timeoutIntMicro = 6000 // 整数表示的微秒值
 	timer := make(map[string]*time.Timer)
 
 	// state := State2
@@ -268,9 +268,9 @@ func (c *ClientEndpoint) Start() {
 			}
 			// 启动计时器
 			// timer = time.AfterFunc(timeoutDuration, handleTimeout)
-			// timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
-			// 	timeoutChan <- handleTimeout
-			// })
+			timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
+				timeoutChan <- handleTimeout
+			})
 			// } else {
 			// 	// 转移到状态1
 			// 	state = State1
@@ -287,15 +287,15 @@ func (c *ClientEndpoint) Start() {
 			// 保持在状态2
 			lastPacketTime[addr.String()] = currentTime[addr.String()]
 			// 重启计时器
-			// if timer[addr.String()] != nil {
-			// 	timer[addr.String()].Stop()
-			// }
+			if timer[addr.String()] != nil {
+				timer[addr.String()].Stop()
+			}
 			// 启动计时器
 			// timer = time.AfterFunc(timeoutDuration, handleTimeout)
 			// 启动计时器
-			// timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
-			// 	timeoutChan <- handleTimeout
-			// })
+			timer[addr.String()] = time.AfterFunc(timeoutDuration, func() {
+				timeoutChan <- handleTimeout
+			})
 			// } else {
 			// 	// 转移到状态1
 			// 	state = State1
@@ -448,7 +448,6 @@ func (c *ClientEndpoint) Start() {
 				// fmt.Printf("Received packet tempBuffer after\n")
 			}
 			mu.Unlock() // 在访问共享资源后解锁
-			handleTimeout()
 		}
 	}
 }
