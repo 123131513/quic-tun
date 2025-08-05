@@ -9,7 +9,9 @@ type RestfulAPIOptions struct {
 
 func GetDefaultRestfulAPIOptions() *RestfulAPIOptions {
 	return &RestfulAPIOptions{
-		HttpdListenOn: "0.0.0.0:8086",
+		// zzh: 仿真中修改某一端的监听端口，避免冲突
+		// HttpdListenOn: "0.0.0.0:8086",
+		HttpdListenOn: "0.0.0.0:8087",
 	}
 }
 

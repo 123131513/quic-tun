@@ -162,6 +162,9 @@ func (c *ClientEndpoint) Start() {
 		dstAddr := &net.UDPAddr{}
 
 		n, oobn, _, addr, err := udpConn.ReadMsgUDP(buffer, oob)
+		if n > tunnel.MaxDatagramSize {
+
+		}
 		// sequenceNumber := strings.TrimRight(string(buffer), "\x00")
 		// 增强型SRTP解析逻辑
 		var (
@@ -433,6 +436,8 @@ func (c *ClientEndpoint) Start() {
 					}
 					go tun.Establish(ctx)
 					tun.Establish_Datagram(ctx)
+					// 注释上面两行代码，启动下面一行代码切换流模式
+					// 注意还需要修改Establish(ctx)为双向隧道
 					// tun.Establish(ctx)
 					//}
 				}()

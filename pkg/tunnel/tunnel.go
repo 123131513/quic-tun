@@ -39,6 +39,7 @@ var (
 
 // zzh: add deadline for packet
 const deadline = 600 * time.Millisecond
+const MaxDatagramSize = 1200 // 最大数据报大小
 
 type UDPConn struct {
 	pc       net.PacketConn
@@ -459,6 +460,8 @@ func (t *tunnel) Establish(ctx context.Context) {
 	)
 	t.fillProperties(ctx)
 	DataStore.Store(t.Uuid, *t)
+	// 修改下面代码切换流模式
+	// 注意修改为双向隧道，服务器端一直保持双向，数据报模式下客户端为单向
 	if t.Conn.isServer {
 		go t.conn2Stream(logger, &wg, conn2stream)
 	} else {
@@ -790,6 +793,7 @@ func (t *tunnel) copyN_datagram(dst io.Writer, src io.Reader, n int64, copyNumCh
 // Rewrite io.Copy function https://pkg.go.dev/io#Copy
 func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, isc2s bool) (err error) {
 	size := 32 * 1024
+	err_log_n := 0
 	if l, ok := src.(*io.LimitedReader); ok && int64(size) > l.N {
 		if l.N < 1 {
 			size = 1
@@ -870,6 +874,10 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 			}
 		}
 
+		if isc2s && nr > 1210 {
+			t.sendStreamData(*t.Stream, buf[0:nr], nwChan)
+		}
+
 		// sequenceNumber := strings.TrimRight(string(buf), "\x00")
 
 		// fmt.Printf("s2c packet from : %s\n", sequenceNumber)
@@ -889,6 +897,7 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 		}
 		data = append(data, buf[:nr]...) // 拼接数据
 		nr = len(data)
+		err_log_n = len(data)
 		// if !isc2s && nr < 0 {
 		// 	copyMu.Unlock()
 		// }
@@ -922,6 +931,55 @@ func (t *tunnel) copy_datagram(dst io.Writer, src io.Reader, nwChan chan<- int, 
 		}
 	}
 	// fmt.Println("copy_datagram end")
+	if err != nil {
+		fmt.Printf("lenght of data %d\n", err_log_n)
+	}
+	return err
+}
+
+// 使用流发送大数据
+func (t *tunnel) sendStreamData(dst io.Writer, data []byte, nwChan chan<- int) error {
+	// var packetLength uint32
+	var err error
+	var nr int
+	nr = len(data)
+	// fmt.Println("BLOCK_END", len(buf), (string(buf[0:nr]) == "BLOCK_END"))
+	if string(data[0:nr]) == "BLOCK_END" {
+		// fmt.Println("BLOCK_END")
+		for i := range data { // 清零
+			data[i] = 0
+		}
+		nr = 0
+		err = nil
+	}
+
+	if nr > 0 {
+		// Write the length of the message
+		err := binary.Write(dst, binary.BigEndian, uint32(nr))
+		if err != nil {
+			fmt.Println("Failed to write packet length:", err)
+			return err
+		}
+	}
+	if nr > 0 {
+		// fmt.Println("Write", nr, "bytes")
+		nw, ew := dst.Write(data[0:nr])
+		if nw < 0 || nr < nw {
+			nw = 0
+			if ew == nil {
+				ew = errors.New("invalid write result")
+			}
+		}
+		nwChan <- nw
+		if ew != nil {
+			err = ew
+			return err
+		}
+		if nr != nw {
+			err = io.ErrShortWrite
+			return err
+		}
+	}
 	return err
 }
 
